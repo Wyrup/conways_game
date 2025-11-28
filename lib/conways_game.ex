@@ -1,74 +1,154 @@
 defmodule ConwaysGame do
   @moduledoc """
-  Implémentation du jeu de la vie de Conway.
+  Implémentation distribuée du jeu de la vie de Conway.
+  Chaque cellule est un processus Elixir distinct.
   """
+end
 
-  # Structure pour représenter la grille
-  # Par exemple: MapSet de tuples {x, y} pour les cellules vivantes
-  # ou une liste de listes
+defmodule ConwaysGame.Cell do
+  @moduledoc """
+  Processus représentant une cellule individuelle.
+  """
+  use GenServer
 
   @doc """
-  Crée une nouvelle grille vide de dimensions données.
+  Démarre un processus cellule à la position {x, y}.
+  État initial: {alive?, neighbors_pids, position}
   """
-  def new_grid(width, height) do
+  def start_link(x, y, alive? \\ false) do
   end
 
   @doc """
-  Initialise une grille avec des cellules vivantes aléatoires.
+  Enregistre les PIDs des 8 voisins de cette cellule.
   """
-  def random_grid(width, height, density \\ 0.3) do
+  def set_neighbors(cell_pid, neighbors_pids) do
   end
 
   @doc """
-  Définit une cellule comme vivante à la position {x, y}.
+  Demande à la cellule de calculer son prochain état.
+  La cellule interroge ses voisins pour compter les vivants.
   """
-  def set_alive(grid, x, y) do
+  def compute_next_state(cell_pid) do
   end
 
   @doc """
-  Vérifie si une cellule est vivante à la position {x, y}.
+  Applique le nouvel état (après que toutes les cellules aient calculé).
   """
-  def alive?(grid, x, y) do
+  def apply_next_state(cell_pid) do
   end
 
   @doc """
-  Compte le nombre de voisins vivants pour une cellule donnée.
-  Les 8 voisins sont: N, NE, E, SE, S, SW, W, NW
+  Retourne si la cellule est vivante (pour que les voisins puissent interroger).
   """
-  def count_neighbors(grid, x, y) do
+  def is_alive?(cell_pid) do
+  end
+
+  # Callbacks GenServer
+  def init({x, y, alive?}) do
+  end
+
+  def handle_call(:is_alive, _from, state) do
+  end
+
+  def handle_call(:compute_next, _from, state) do
+  end
+
+  def handle_cast({:set_neighbors, neighbors}, state) do
+  end
+
+  def handle_cast(:apply_next, state) do
+  end
+end
+
+defmodule ConwaysGame.Grid do
+  @moduledoc """
+  Gestionnaire de la grille - supervise et coordonne toutes les cellules.
+  """
+
+  @doc """
+  Crée une grille de cellules (processus) sur plusieurs nœuds.
+  Retourne une map: %{{x, y} => cell_pid}
+  """
+  def create(width, height, nodes \\ [node()]) do
   end
 
   @doc """
-  Retourne la liste des coordonnées des 8 voisins d'une cellule.
+  Initialise une grille avec un pattern aléatoire.
   """
-  defp neighbors(x, y) do
+  def random(width, height, density, nodes) do
   end
 
   @doc """
-  Détermine si une cellule sera vivante à la génération suivante.
-  Règles:
-  - Cellule vivante avec 2-3 voisins vivants -> reste vivante
-  - Cellule morte avec exactement 3 voisins vivants -> devient vivante
-  - Sinon -> morte
+  Configure les voisins pour chaque cellule de la grille.
   """
-  def next_state(grid, x, y) do
+  def setup_neighbors(grid_map, width, height) do
   end
 
   @doc """
-  Calcule la génération suivante de la grille complète.
+  Exécute une génération: toutes les cellules calculent puis appliquent leur nouvel état.
   """
-  def next_generation(grid) do
+  def next_generation(grid_map) do
   end
 
   @doc """
-  Affiche la grille dans le terminal (pour le debug).
+  Récupère l'état actuel de toutes les cellules pour affichage.
+  Retourne: %{{x, y} => alive?}
   """
-  def display(grid) do
+  def get_state(grid_map) do
   end
 
   @doc """
-  Lance une simulation pendant n générations avec un délai entre chaque.
+  Répartit les cellules sur différents nœuds de manière équilibrée.
   """
-  def run(grid, generations, delay_ms \\ 500) do
+  defp distribute_cells(positions, nodes) do
+  end
+end
+
+defmodule ConwaysGame.Supervisor do
+  @moduledoc """
+  Superviseur pour les cellules et la grille.
+  """
+  use Supervisor
+
+  def start_link(opts) do
+  end
+
+  def init(_opts) do
+  end
+end
+
+defmodule ConwaysGame.Display do
+  @moduledoc """
+  Module pour afficher l'état de la grille.
+  """
+
+  @doc """
+  Affiche la grille dans le terminal.
+  """
+  def terminal(grid_state, width, height) do
+  end
+
+  @doc """
+  Prépare les données pour LiveView (format JSON).
+  """
+  def for_liveview(grid_state) do
+  end
+end
+
+defmodule ConwaysGame.Cluster do
+  @moduledoc """
+  Utilitaires pour gérer le cluster de nœuds distribués.
+  """
+
+  @doc """
+  Connecte les nœuds du cluster.
+  """
+  def connect_nodes(node_names) do
+  end
+
+  @doc """
+  Liste les nœuds disponibles.
+  """
+  def list_nodes do
   end
 end
