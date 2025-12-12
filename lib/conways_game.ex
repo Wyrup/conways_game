@@ -281,16 +281,17 @@ defmodule ConwaysGame.Display do
   Affiche la grille dans le terminal.
   """
   def terminal(grid_state, width, height) do
-    IO.puts("\n" <> String.duplicate("=", width * 2))
+  IO.puts("\n" <> String.duplicate("=", width * 2))
 
-    for y <- 0..(height - 1) do
-      row = for x <- 0..(width - 1) do
-        if Map.get(grid_state, {x, y}, false), do: "■", else: "□"
-      end
-      IO.puts(Enum.join(row))
+  for y <- 0..(height - 1) do
+    row = for x <- 0..(width - 1) do
+      if Map.get(grid_state, {x, y}, false), do: "██", else: "··"
     end
-    IO.puts(String.duplicate("=", width * 2))
+    IO.puts(Enum.join(row, ""))
   end
+
+  IO.puts(String.duplicate("=", width * 2))
+end
 
   @doc """
   Prépare les données pour LiveView (format JSON).
