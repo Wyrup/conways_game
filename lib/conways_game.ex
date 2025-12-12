@@ -48,6 +48,10 @@ defmodule ConwaysGame.Cell do
     GenServer.call(cell_pid, :is_alive)
   end
 
+  def set_alive(cell_pid) do
+  GenServer.cast(cell_pid, :set_alive)
+  end
+
   # Callbacks GenServer
   def init({x, y, alive?}) do
     state = %{
@@ -91,6 +95,10 @@ defmodule ConwaysGame.Cell do
   def handle_cast(:apply_next, state) do
     {:noreply, %{state | alive: state.next_state}}
   end
+
+  def handle_cast(:set_alive, state) do
+  {:noreply, %{state | alive: true, next_state: true}}
+  end
 end
 
 defmodule ConwaysGame.Grid do
@@ -133,6 +141,41 @@ defmodule ConwaysGame.Grid do
       end
     setup_neighbors(grid_map, width, height)
     grid_map
+  end
+
+  def glider(width, height, start_x \\ 1, start_y \\ 1, nodes \\ [node()]) do
+  # Créer une grille vide
+  grid_map =
+    for x <- 0..(width - 1),
+        y <- 0..(height - 1),
+        into: %{} do
+      node = select_node(x, y, nodes)
+      {:ok, pid} = :rpc.call(node, ConwaysGame.Cell, :start_link, [x, y, false])
+      {{x, y}, pid}
+    end
+
+  # Pattern du glider:
+  #   □■□
+  #   □□■
+  #   ■■■
+  glider_positions = [
+    {start_x + 1, start_y},
+    {start_x + 2, start_y + 1},
+    {start_x, start_y + 2},
+    {start_x + 1, start_y + 2},
+    {start_x + 2, start_y + 2}
+  ]
+
+  # Activer les cellules du glider
+  Enum.each(glider_positions, fn {x, y} ->
+    if x >= 0 and x < width and y >= 0 and y < height do
+      pid = Map.get(grid_map, {x, y})
+      if pid, do: ConwaysGame.Cell.set_alive(pid)
+    end
+  end)
+
+  setup_neighbors(grid_map, width, height)
+  grid_map
   end
 
   @doc """
