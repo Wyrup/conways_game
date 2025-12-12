@@ -323,3 +323,203 @@ defmodule ConwaysGame.Cluster do
     [node() | Node.list()]
   end
 end
+
+# Ajoutez ce module à la fin de lib/conways_game.ex
+
+defmodule ConwaysGame.Interactive do
+  @moduledoc """
+  Interface interactive en terminal pour le jeu de la vie.
+  """
+  use GenServer
+
+  # API Client
+
+  def start_link(width \\ 30, height \\ 30) do
+    GenServer.start_link(__MODULE__, {width, height}, name: __MODULE__)
+  end
+
+  def start_game do
+    GenServer.cast(__MODULE__, :start)
+  end
+
+  def pause_game do
+    GenServer.cast(__MODULE__, :pause)
+  end
+
+  def toggle_cell(x, y) do
+    GenServer.cast(__MODULE__, {:toggle_cell, x, y})
+  end
+
+  def reset do
+    GenServer.cast(__MODULE__, :reset)
+  end
+
+  def load_random(density \\ 0.3) do
+    GenServer.cast(__MODULE__, {:load_random, density})
+  end
+
+  def load_glider do
+    GenServer.cast(__MODULE__, :load_glider)
+  end
+
+  def show do
+    GenServer.cast(__MODULE__, :show)
+  end
+
+  def status do
+    GenServer.call(__MODULE__, :status)
+  end
+
+  # Callbacks GenServer
+
+  def init({width, height}) do
+    grid = ConwaysGame.Grid.create(width, height)
+
+    state = %{
+      grid: grid,
+      width: width,
+      height: height,
+      running: false,
+      generation: 0,
+      timer_ref: nil
+    }
+
+    IO.puts("\n🎮 Conway's Game of Life - Mode Interactif")
+    IO.puts("Grille: #{width}x#{height}")
+    print_help()
+    display_grid(state)
+
+    {:ok, state}
+  end
+
+  def handle_cast(:start, state) do
+    if state.running do
+      {:noreply, state}
+    else
+      IO.puts("▶️  Démarrage de la simulation...")
+      {:ok, timer_ref} = :timer.send_interval(500, self(), :tick)
+      {:noreply, %{state | running: true, timer_ref: timer_ref}}
+    end
+  end
+
+  def handle_cast(:pause, state) do
+    if state.running and state.timer_ref do
+      :timer.cancel(state.timer_ref)
+      IO.puts("⏸️  Simulation en pause")
+      {:noreply, %{state | running: false, timer_ref: nil}}
+    else
+      {:noreply, state}
+    end
+  end
+
+  def handle_cast({:toggle_cell, x, y}, state) do
+    if x >= 0 and x < state.width and y >= 0 and y < state.height do
+      pid = Map.get(state.grid, {x, y})
+      current = ConwaysGame.Cell.is_alive?(pid)
+
+      if current do
+        GenServer.cast(pid, {:set_alive, false})
+        IO.puts("❌ Cellule (#{x}, #{y}) désactivée")
+      else
+        ConServer.cast(pid, :set_alive)
+        IO.puts("✅ Cellule (#{x}, #{y}) activée")
+      end
+
+      display_grid(state)
+    else
+      IO.puts("⚠️  Position invalide: (#{x}, #{y})")
+    end
+
+    {:noreply, state}
+  end
+
+  def handle_cast(:reset, state) do
+    if state.timer_ref, do: :timer.cancel(state.timer_ref)
+
+    grid = ConwaysGame.Grid.create(state.width, state.height)
+    new_state = %{state | grid: grid, generation: 0, running: false, timer_ref: nil}
+
+    IO.puts("🔄 Grille réinitialisée")
+    display_grid(new_state)
+
+    {:noreply, new_state}
+  end
+
+  def handle_cast({:load_random, density}, state) do
+    if state.timer_ref, do: :timer.cancel(state.timer_ref)
+
+    grid = ConwaysGame.Grid.random(state.width, state.height, density, [node()])
+    new_state = %{state | grid: grid, generation: 0, running: false, timer_ref: nil}
+
+    IO.puts("🎲 Grille aléatoire chargée (densité: #{density})")
+    display_grid(new_state)
+
+    {:noreply, new_state}
+  end
+
+  def handle_cast(:load_glider, state) do
+    if state.timer_ref, do: :timer.cancel(state.timer_ref)
+
+    grid = ConwaysGame.Grid.glider(state.width, state.height, 5, 5)
+    new_state = %{state | grid: grid, generation: 0, running: false, timer_ref: nil}
+
+    IO.puts("🛸 Glider chargé")
+    display_grid(new_state)
+
+    {:noreply, new_state}
+  end
+
+  def handle_cast(:show, state) do
+    display_grid(state)
+    {:noreply, state}
+  end
+
+  def handle_call(:status, _from, state) do
+    status = %{
+      generation: state.generation,
+      running: state.running,
+      width: state.width,
+      height: state.height
+    }
+    {:reply, status, state}
+  end
+
+  def handle_info(:tick, state) do
+    ConwaysGame.Grid.next_generation(state.grid)
+    new_state = %{state | generation: state.generation + 1}
+
+    IO.puts("\n📊 Génération: #{new_state.generation}")
+    display_grid(new_state)
+
+    {:noreply, new_state}
+  end
+
+  # Helpers privés
+
+  defp display_grid(state) do
+    grid_state = ConwaysGame.Grid.get_state(state.grid)
+    ConwaysGame.Display.terminal(grid_state, state.width, state.height)
+
+    IO.puts("Status: #{if state.running, do: "▶️  Running", else: "⏸️  Paused"} | Génération: #{state.generation}")
+  end
+
+  defp print_help do
+    IO.puts("""
+
+    📖 Commandes disponibles:
+
+    ConwaysGame.Interactive.start_game()      # ▶️  Démarrer
+    ConwaysGame.Interactive.pause_game()      # ⏸️  Pause
+    ConwaysGame.Interactive.toggle_cell(x,y)  # 🔄 Toggle cellule
+    ConwaysGame.Interactive.reset()           # 🔄 Reset
+    ConwaysGame.Interactive.load_random(0.3)  # 🎲 Grille aléatoire
+    ConwaysGame.Interactive.load_glider()     # 🛸 Charger glider
+    ConwaysGame.Interactive.show()            # 👁️  Afficher grille
+    ConwaysGame.Interactive.status()          # 📊 Afficher status
+
+    Alias pratiques:
+    alias ConwaysGame.Interactive, as: Game
+    Game.start_game()
+    """)
+  end
+end
