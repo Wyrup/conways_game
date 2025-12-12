@@ -103,24 +103,65 @@ defmodule ConwaysGame.Grid do
   Retourne une map: %{{x, y} => cell_pid}
   """
   def create(width, height, nodes \\ [node()]) do
+    # Phase 1: Créer les cellules
+    grid_map =
+      for x <- 0..(width - 1),
+          y <- 0..(height - 1),
+          into: %{} do
+        node = select_node(x, y, nodes)
+        {:ok, pid} = :rpc.call(node, ConwaysGame.Cell, :start_link, [x, y, false])
+        {{x, y}, pid}
+      end
+    # Phase 2: Configurer les voisins
+    setup_neighbors(grid_map, width, height)
+
+    grid_map
   end
 
   @doc """
   Initialise une grille avec un pattern aléatoire.
   """
   def random(width, height, density, nodes) do
+    grid_map =
+      for x <- 0..(width - 1),
+          y <- 0..(height - 1),
+          into: %{} do
+        alive? = :rand.uniform() < density
+        node = select_node(x, y, nodes)
+        {:ok, pid} = :rpc.call(node, ConwaysGame.Cell, :start_link, [x, y, alive?])
+        {{x, y}, pid}
+      end
+    setup_neighbors(grid_map, width, height)
+    grid_map
   end
 
   @doc """
   Configure les voisins pour chaque cellule de la grille.
   """
   def setup_neighbors(grid_map, width, height) do
+    Enum.each(grid_map, fn {{x, y}, cell_pid} ->
+      neighbor_pids =
+        get_neighbor_positions(x, y, width, height)
+        |> Enum.map(fn pos -> Map.get(grid_map, pos) end)
+        |> Enum.reject(&is_nil/1)
+
+      # Message envoyé à la cellule avec ses voisins
+      ConwaysGame.Cell.set_neighbors(cell_pid, neighbor_pids)
+    end)
   end
 
   @doc """
   Exécute une génération: toutes les cellules calculent puis appliquent leur nouvel état.
   """
   def next_generation(grid_map) do
+    # Phase 1: Calculer le prochain état
+    Enum.each(grid_map, fn {_pos, cell_pid} ->
+      ConwaysGame.Cell.compute_next_state(cell_pid)
+    end)
+    # Phase 2: Appliquer le nouvel état
+    Enum.each(grid_map, fn {_pos, cell_pid} ->
+      ConwaysGame.Cell.apply_next_state(cell_pid)
+    end)
   end
 
   @doc """
@@ -128,12 +169,40 @@ defmodule ConwaysGame.Grid do
   Retourne: %{{x, y} => alive?}
   """
   def get_state(grid_map) do
+    grid_map
+    |> Enum.map(fn {pos, pid} ->
+      {pos, ConwaysGame.Cell.is_alive?(pid)}
+    end)
+    |> Enum.into(%{})
+  end
+
+  defp get_neighbor_positions(x, y, width, height) do
+    for dx <- -1..1,
+        dy <- -1..1,
+        {dx, dy} != {0, 0},
+        nx = x + dx, ny = y + dy,
+        nx >= 0, nx < width,
+        ny >= 0, ny < height do
+      {nx, ny}
+    end
+  end
+
+  defp select_node(x, y, nodes) do
+    # Répartition équilibrée basée sur la position
+    index = rem(x * 1000 + y, length(nodes))
+    Enum.at(nodes, index)
   end
 
   @doc """
   Répartit les cellules sur différents nœuds de manière équilibrée.
   """
   defp distribute_cells(positions, nodes) do
+    positions
+    |> Enum.with_index()
+    |> Enum.map(fn {pos, idx} ->
+      node = Enum.at(nodes, rem(idx, length(nodes)))
+      {pos, node}
+    end)
   end
 end
 
@@ -144,9 +213,15 @@ defmodule ConwaysGame.Supervisor do
   use Supervisor
 
   def start_link(opts) do
+    Supervisor.start_link(__MODULE__, opts, name: __MODULE__)
   end
 
   def init(_opts) do
+    children = [
+      # On peut ajouter des superviseurs pour les cellules ici si nécessaire
+    ]
+
+    Supervisor.init(children, strategy: :one_for_one)
   end
 end
 
@@ -159,12 +234,24 @@ defmodule ConwaysGame.Display do
   Affiche la grille dans le terminal.
   """
   def terminal(grid_state, width, height) do
+    IO.puts("\n" <> String.duplicate("=", width * 2))
+
+    for y <- 0..(height - 1) do
+      row = for x <- 0..(width - 1) do
+        if Map.get(grid_state, {x, y}, false), do: "■", else: "□"
+      end
+      IO.puts(Enum.join(row))
+    end
+    IO.puts(String.duplicate("=", width * 2))
   end
 
   @doc """
   Prépare les données pour LiveView (format JSON).
   """
   def for_liveview(grid_state) do
+    grid_state
+    |> Enum.filter(fn {_pos, alive?} -> alive? end)
+    |> Enum.map(fn {{x, y}, _} -> %{x: x, y: y} end)
   end
 end
 
@@ -177,11 +264,19 @@ defmodule ConwaysGame.Cluster do
   Connecte les nœuds du cluster.
   """
   def connect_nodes(node_names) do
+    Enum.each(node_names, fn node_name ->
+      case Node.connect(node_name) do
+        true -> IO.puts("Connected to #{node_name}")
+        false -> IO.puts("Failed to connect to #{node_name}")
+        :ignored -> IO.puts("Already connected to #{node_name}")
+      end
+    end)
   end
 
   @doc """
   Liste les nœuds disponibles.
   """
   def list_nodes do
+    [node() | Node.list()]
   end
 end
