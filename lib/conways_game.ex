@@ -96,6 +96,10 @@ defmodule ConwaysGame.Cell do
     {:noreply, %{state | alive: state.next_state}}
   end
 
+  def handle_cast({:set_alive, value}, state) do
+  {:noreply, %{state | alive: value, next_state: value}}
+  end
+
   def handle_cast(:set_alive, state) do
   {:noreply, %{state | alive: true, next_state: true}}
   end
@@ -116,10 +120,14 @@ defmodule ConwaysGame.Grid do
       for x <- 0..(width - 1),
           y <- 0..(height - 1),
           into: %{} do
-        node = select_node(x, y, nodes)
-        {:ok, pid} = :rpc.call(node, ConwaysGame.Cell, :start_link, [x, y, false])
+        target_node = select_node(x, y, nodes)
+
+        # Créer le processus avec spawn qui envoie le PID au parent
+        pid = create_cell_on_node(target_node, x, y, false)
+
         {{x, y}, pid}
       end
+
     # Phase 2: Configurer les voisins
     setup_neighbors(grid_map, width, height)
 
@@ -135,47 +143,71 @@ defmodule ConwaysGame.Grid do
           y <- 0..(height - 1),
           into: %{} do
         alive? = :rand.uniform() < density
-        node = select_node(x, y, nodes)
-        {:ok, pid} = :rpc.call(node, ConwaysGame.Cell, :start_link, [x, y, alive?])
+        target_node = select_node(x, y, nodes)
+
+        pid = create_cell_on_node(target_node, x, y, alive?)
+
         {{x, y}, pid}
       end
+
     setup_neighbors(grid_map, width, height)
     grid_map
   end
 
   def glider(width, height, start_x \\ 1, start_y \\ 1, nodes \\ [node()]) do
-  # Créer une grille vide
-  grid_map =
-    for x <- 0..(width - 1),
-        y <- 0..(height - 1),
-        into: %{} do
-      node = select_node(x, y, nodes)
-      {:ok, pid} = :rpc.call(node, ConwaysGame.Cell, :start_link, [x, y, false])
-      {{x, y}, pid}
+    # Créer une grille vide
+    grid_map =
+      for x <- 0..(width - 1),
+          y <- 0..(height - 1),
+          into: %{} do
+        target_node = select_node(x, y, nodes)
+        pid = create_cell_on_node(target_node, x, y, false)
+        {{x, y}, pid}
+      end
+
+    # Pattern du glider:
+    #   □■□
+    #   □□■
+    #   ■■■
+    glider_positions = [
+      {start_x + 1, start_y},
+      {start_x + 2, start_y + 1},
+      {start_x, start_y + 2},
+      {start_x + 1, start_y + 2},
+      {start_x + 2, start_y + 2}
+    ]
+
+    # Activer les cellules du glider
+    Enum.each(glider_positions, fn {x, y} ->
+      if x >= 0 and x < width and y >= 0 and y < height do
+        pid = Map.get(grid_map, {x, y})
+        if pid, do: ConwaysGame.Cell.set_alive(pid)
+      end
+    end)
+
+    setup_neighbors(grid_map, width, height)
+    grid_map
+  end
+
+  # Nouvelle fonction pour créer une cellule sur un nœud spécifique
+  defp create_cell_on_node(target_node, x, y, alive?) do
+    parent = self()
+    ref = make_ref()
+
+    # Spawner un processus sur le nœud cible
+    Node.spawn(target_node, fn ->
+      {:ok, pid} = ConwaysGame.Cell.start_link(x, y, alive?)
+      send(parent, {ref, pid})
+      # Garder ce processus en vie pour maintenir la cellule
+      Process.sleep(:infinity)
+    end)
+
+    # Attendre le PID
+    receive do
+      {^ref, pid} -> pid
+    after
+      5000 -> raise "Timeout creating cell at (#{x}, #{y}) on #{target_node}"
     end
-
-  # Pattern du glider:
-  #   □■□
-  #   □□■
-  #   ■■■
-  glider_positions = [
-    {start_x + 1, start_y},
-    {start_x + 2, start_y + 1},
-    {start_x, start_y + 2},
-    {start_x + 1, start_y + 2},
-    {start_x + 2, start_y + 2}
-  ]
-
-  # Activer les cellules du glider
-  Enum.each(glider_positions, fn {x, y} ->
-    if x >= 0 and x < width and y >= 0 and y < height do
-      pid = Map.get(grid_map, {x, y})
-      if pid, do: ConwaysGame.Cell.set_alive(pid)
-    end
-  end)
-
-  setup_neighbors(grid_map, width, height)
-  grid_map
   end
 
   @doc """
@@ -235,7 +267,6 @@ defmodule ConwaysGame.Grid do
     index = rem(x * 1000 + y, length(nodes))
     Enum.at(nodes, index)
   end
-
 end
 
 defmodule ConwaysGame.Supervisor do
@@ -354,7 +385,10 @@ defmodule ConwaysGame.Interactive do
   # Callbacks GenServer
 
   def init({width, height}) do
-    grid = ConwaysGame.Grid.create(width, height)
+    # Distributed (multiple nodes):
+    nodes = ConwaysGame.Cluster.list_nodes()
+    IO.puts("Using nodes: #{inspect(nodes)}")
+    grid = ConwaysGame.Grid.create(width, height, nodes)
 
     state = %{
       grid: grid,
