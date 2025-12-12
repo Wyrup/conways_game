@@ -493,8 +493,7 @@ defmodule ConwaysGame.Interactive do
     ConwaysGame.Grid.next_generation(state.grid)
     new_state = %{state | generation: state.generation + 1}
 
-    IO.puts("\n📊 Génération: #{new_state.generation}")
-    display_grid(new_state)
+    display_grid(new_state)  # Enlever le IO.puts avant
 
     {:noreply, new_state}
   end
@@ -502,6 +501,9 @@ defmodule ConwaysGame.Interactive do
   # Helpers privés
 
   defp display_grid(state) do
+    # Clear screen avec codes ANSI universels
+    IO.write("\e[2J\e[H")
+
     grid_state = ConwaysGame.Grid.get_state(state.grid)
     ConwaysGame.Display.terminal(grid_state, state.width, state.height)
 
