@@ -16,12 +16,14 @@ defmodule ConwaysGame.Cell do
   État initial: {alive?, neighbors_pids, position}
   """
   def start_link(x, y, alive? \\ false) do
+    GenServer.start_link(__MODULE__, {x, y, alive?})
   end
 
   @doc """
   Enregistre les PIDs des 8 voisins de cette cellule.
   """
   def set_neighbors(cell_pid, neighbors_pids) do
+    GenServer.cast(cell_pid, {:set_neighbors, neighbors_pids})
   end
 
   @doc """
@@ -29,22 +31,32 @@ defmodule ConwaysGame.Cell do
   La cellule interroge ses voisins pour compter les vivants.
   """
   def compute_next_state(cell_pid) do
+    GenServer.call(cell_pid, :compute_next)
   end
 
   @doc """
   Applique le nouvel état (après que toutes les cellules aient calculé).
   """
   def apply_next_state(cell_pid) do
+    GenServer.cast(cell_pid, :apply_next)
   end
 
   @doc """
   Retourne si la cellule est vivante (pour que les voisins puissent interroger).
   """
   def is_alive?(cell_pid) do
+    GenServer.call(cell_pid, :is_alive)
   end
 
   # Callbacks GenServer
   def init({x, y, alive?}) do
+    state = %{
+      position: {x, y},
+      alive?: alive?,
+      neighbors: [],
+      next_state: alive?
+    }
+    {:ok, state}
   end
 
   def handle_call(:is_alive, _from, state) do
