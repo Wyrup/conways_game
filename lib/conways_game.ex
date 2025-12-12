@@ -96,6 +96,10 @@ defmodule ConwaysGame.Cell do
     {:noreply, %{state | alive: state.next_state}}
   end
 
+  def handle_cast({:set_alive, value}, state) do
+  {:noreply, %{state | alive: value, next_state: value}}
+  end
+
   def handle_cast(:set_alive, state) do
   {:noreply, %{state | alive: true, next_state: true}}
   end
@@ -421,7 +425,7 @@ defmodule ConwaysGame.Interactive do
         GenServer.cast(pid, {:set_alive, false})
         IO.puts("❌ Cellule (#{x}, #{y}) désactivée")
       else
-        ConServer.cast(pid, :set_alive)
+        GenServer.cast(pid, :set_alive)
         IO.puts("✅ Cellule (#{x}, #{y}) activée")
       end
 
