@@ -96,10 +96,6 @@ defmodule ConwaysGame.Cell do
     {:noreply, %{state | alive: state.next_state}}
   end
 
-  def handle_cast({:set_alive, value}, state) do
-  {:noreply, %{state | alive: value, next_state: value}}
-  end
-
   def handle_cast(:set_alive, state) do
   {:noreply, %{state | alive: true, next_state: true}}
   end
@@ -240,17 +236,6 @@ defmodule ConwaysGame.Grid do
     Enum.at(nodes, index)
   end
 
-  @doc """
-  Répartit les cellules sur différents nœuds de manière équilibrée.
-  """
-  defp distribute_cells(positions, nodes) do
-    positions
-    |> Enum.with_index()
-    |> Enum.map(fn {pos, idx} ->
-      node = Enum.at(nodes, rem(idx, length(nodes)))
-      {pos, node}
-    end)
-  end
 end
 
 defmodule ConwaysGame.Supervisor do
@@ -291,15 +276,6 @@ defmodule ConwaysGame.Display do
   end
 
   IO.puts(String.duplicate("=", width * 2))
-end
-
-  @doc """
-  Prépare les données pour LiveView (format JSON).
-  """
-  def for_liveview(grid_state) do
-    grid_state
-    |> Enum.filter(fn {_pos, alive?} -> alive? end)
-    |> Enum.map(fn {{x, y}, _} -> %{x: x, y: y} end)
   end
 end
 
