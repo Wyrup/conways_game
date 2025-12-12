@@ -52,7 +52,7 @@ defmodule ConwaysGame.Cell do
   def init({x, y, alive?}) do
     state = %{
       position: {x, y},
-      alive?: alive?,
+      alive: alive?,
       neighbors: [],
       next_state: alive?
     }
@@ -60,15 +60,36 @@ defmodule ConwaysGame.Cell do
   end
 
   def handle_call(:is_alive, _from, state) do
+    {:reply, state.alive, state}
   end
 
   def handle_call(:compute_next, _from, state) do
+    # demande aux voisins s'ils sont vivants
+    alive_count =
+      state.neighbors
+      |> Enum.map(fn neighbor_pid ->
+        # Communication par message avec chaque voisin
+        is_alive?(neighbor_pid)
+      end)
+      |> Enum.count(& &1)
+    # Applique les règles du jeu de la vie
+    next_state = case {state.alive, alive_count} do
+      {true, 2} -> true
+      {true, 3} -> true
+      {false, 3} -> true
+      _ -> false
+    end
+
+    new_state = %{state | next_state: next_state}
+    {:reply, :ok, new_state}
   end
 
   def handle_cast({:set_neighbors, neighbors}, state) do
+    {:noreply, %{state | neighbors: neighbors}}
   end
 
   def handle_cast(:apply_next, state) do
+    {:noreply, %{state | alive: state.next_state}}
   end
 end
 
