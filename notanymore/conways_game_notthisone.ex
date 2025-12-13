@@ -48,10 +48,6 @@ defmodule ConwaysGame.Cell do
     GenServer.call(cell_pid, :is_alive)
   end
 
-  def set_alive(cell_pid) do
-  GenServer.cast(cell_pid, :set_alive)
-  end
-
   # Callbacks GenServer
   def init({x, y, alive?}) do
     state = %{
@@ -98,10 +94,6 @@ defmodule ConwaysGame.Cell do
 
   def handle_cast({:set_alive, value}, state) do
   {:noreply, %{state | alive: value, next_state: value}}
-  end
-
-  def handle_cast(:set_alive, state) do
-  {:noreply, %{state | alive: true, next_state: true}}
   end
 end
 
@@ -266,25 +258,6 @@ defmodule ConwaysGame.Grid do
     # Répartition équilibrée basée sur la position
     index = rem(x + y, length(nodes))
     Enum.at(nodes, index)
-  end
-end
-
-defmodule ConwaysGame.Supervisor do
-  @moduledoc """
-  Superviseur pour les cellules et la grille.
-  """
-  use Supervisor
-
-  def start_link(opts) do
-    Supervisor.start_link(__MODULE__, opts, name: __MODULE__)
-  end
-
-  def init(_opts) do
-    children = [
-      # On peut ajouter des superviseurs pour les cellules ici si nécessaire
-    ]
-
-    Supervisor.init(children, strategy: :one_for_one)
   end
 end
 
