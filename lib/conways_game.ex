@@ -9,28 +9,255 @@ defmodule ConwaysGame.Cell do
   @moduledoc """
   Processus représentant une cellule individuelle.
   """
-
   use GenServer
 
   @doc """
   Démarre un processus cellule à la position {x, y}.
   État initial: {alive?, neighbors_pids, position}
   """
-
   def start_link(x, y, alive? \\ false) do
     GenServer.start_link(__MODULE__, {x, y, alive?})
   end
 
-  def get_neighbor_positions(x, y, width, height) do
+  @doc """
+  Enregistre les PIDs des 8 voisins de cette cellule.
+  """
+  def set_neighbors(cell_pid, neighbors_pids) do
+    GenServer.cast(cell_pid, {:set_neighbors, neighbors_pids})
+  end
+
+  @doc """
+  Demande à la cellule de calculer son prochain état.
+  La cellule interroge ses voisins pour compter les vivants.
+  """
+  def compute_next_state(cell_pid) do
+    GenServer.call(cell_pid, :compute_next)
+  end
+
+  @doc """
+  Applique le nouvel état (après que toutes les cellules aient calculé).
+  """
+  def apply_next_state(cell_pid) do
+    GenServer.cast(cell_pid, :apply_next)
+  end
+
+  @doc """
+  Retourne si la cellule est vivante (pour que les voisins puissent interroger).
+  """
+  def is_alive?(cell_pid) do
+    GenServer.call(cell_pid, :is_alive)
+  end
+
+  def set_alive(cell_pid) do
+  GenServer.cast(cell_pid, :set_alive)
+  end
+
+  # Callbacks GenServer
+  def init({x, y, alive?}) do
+    state = %{
+      position: {x, y},
+      alive: alive?,
+      neighbors: [],
+      next_state: alive?
+    }
+    {:ok, state}
+  end
+
+  def handle_call(:is_alive, _from, state) do
+    {:reply, state.alive, state}
+  end
+
+  def handle_call(:compute_next, _from, state) do
+    # demande aux voisins s'ils sont vivants
+    alive_count =
+      state.neighbors
+      |> Enum.map(fn neighbor_pid ->
+        # Communication par message avec chaque voisin
+        is_alive?(neighbor_pid)
+      end)
+      |> Enum.count(& &1)
+    # Applique les règles du jeu de la vie
+    next_state = case {state.alive, alive_count} do
+      {true, 2} -> true
+      {true, 3} -> true
+      {false, 3} -> true
+      _ -> false
+    end
+
+    new_state = %{state | next_state: next_state}
+    {:reply, :ok, new_state}
+  end
+
+  def handle_cast({:set_neighbors, neighbors}, state) do
+    {:noreply, %{state | neighbors: neighbors}}
+  end
+
+  def handle_cast(:apply_next, state) do
+    {:noreply, %{state | alive: state.next_state}}
+  end
+
+  def handle_cast({:set_alive, value}, state) do
+  {:noreply, %{state | alive: value, next_state: value}}
+  end
+
+  def handle_cast(:set_alive, state) do
+  {:noreply, %{state | alive: true, next_state: true}}
+  end
+end
+
+defmodule ConwaysGame.Grid do
+  @moduledoc """
+  Gestionnaire de la grille - supervise et coordonne toutes les cellules.
+  """
+
+  @doc """
+  Crée une grille de cellules (processus) sur plusieurs nœuds.
+  Retourne une map: %{{x, y} => cell_pid}
+  """
+  def create(width, height, nodes \\ [node()]) do
+    # Phase 1: Créer les cellules
+    grid_map =
+      for x <- 0..(width - 1),
+          y <- 0..(height - 1),
+          into: %{} do
+        target_node = select_node(x, y, nodes)
+
+        # Créer le processus avec spawn qui envoie le PID au parent
+        pid = create_cell_on_node(target_node, x, y, false)
+
+        {{x, y}, pid}
+      end
+
+    # Phase 2: Configurer les voisins
+    setup_neighbors(grid_map, width, height)
+
+    grid_map
+  end
+
+  @doc """
+  Initialise une grille avec un pattern aléatoire.
+  """
+  def random(width, height, density, nodes) do
+    grid_map =
+      for x <- 0..(width - 1),
+          y <- 0..(height - 1),
+          into: %{} do
+        alive? = :rand.uniform() < density
+        target_node = select_node(x, y, nodes)
+
+        pid = create_cell_on_node(target_node, x, y, alive?)
+
+        {{x, y}, pid}
+      end
+
+    setup_neighbors(grid_map, width, height)
+    grid_map
+  end
+
+  def glider(width, height, start_x \\ 1, start_y \\ 1, nodes \\ [node()]) do
+    # Créer une grille vide
+    grid_map =
+      for x <- 0..(width - 1),
+          y <- 0..(height - 1),
+          into: %{} do
+        target_node = select_node(x, y, nodes)
+        pid = create_cell_on_node(target_node, x, y, false)
+        {{x, y}, pid}
+      end
+
+    # Pattern du glider:
+    #   □■□
+    #   □□■
+    #   ■■■
+    glider_positions = [
+      {start_x + 1, start_y},
+      {start_x + 2, start_y + 1},
+      {start_x, start_y + 2},
+      {start_x + 1, start_y + 2},
+      {start_x + 2, start_y + 2}
+    ]
+
+    # Activer les cellules du glider
+    Enum.each(glider_positions, fn {x, y} ->
+      if x >= 0 and x < width and y >= 0 and y < height do
+        pid = Map.get(grid_map, {x, y})
+        if pid, do: ConwaysGame.Cell.set_alive(pid)
+      end
+    end)
+
+    setup_neighbors(grid_map, width, height)
+    grid_map
+  end
+
+  # Nouvelle fonction pour créer une cellule sur un nœud spécifique
+  defp create_cell_on_node(target_node, x, y, alive?) do
+    parent = self()
+    ref = make_ref()
+
+    # Spawner un processus sur le nœud cible
+    Node.spawn(target_node, fn ->
+      {:ok, pid} = ConwaysGame.Cell.start_link(x, y, alive?)
+      send(parent, {ref, pid})
+      # Garder ce processus en vie pour maintenir la cellule
+      Process.sleep(:infinity)
+    end)
+
+    # Attendre le PID
+    receive do
+      {^ref, pid} -> pid
+    after
+      5000 -> raise "Timeout creating cell at (#{x}, #{y}) on #{target_node}"
+    end
+  end
+
+  @doc """
+  Configure les voisins pour chaque cellule de la grille.
+  """
+  def setup_neighbors(grid_map, width, height) do
+    Enum.each(grid_map, fn {{x, y}, cell_pid} ->
+      neighbor_pids =
+        get_neighbor_positions(x, y, width, height)
+        |> Enum.map(fn pos -> Map.get(grid_map, pos) end)
+        |> Enum.reject(&is_nil/1)
+
+      # Message envoyé à la cellule avec ses voisins
+      ConwaysGame.Cell.set_neighbors(cell_pid, neighbor_pids)
+    end)
+  end
+
+  @doc """
+  Exécute une génération: toutes les cellules calculent puis appliquent leur nouvel état.
+  """
+  def next_generation(grid_map) do
+    # Phase 1: Calculer le prochain état
+    Enum.each(grid_map, fn {_pos, cell_pid} ->
+      ConwaysGame.Cell.compute_next_state(cell_pid)
+    end)
+    # Phase 2: Appliquer le nouvel état
+    Enum.each(grid_map, fn {_pos, cell_pid} ->
+      ConwaysGame.Cell.apply_next_state(cell_pid)
+    end)
+  end
+
+  @doc """
+  Récupère l'état actuel de toutes les cellules pour affichage.
+  Retourne: %{{x, y} => alive?}
+  """
+  def get_state(grid_map) do
+    grid_map
+    |> Enum.map(fn {pos, pid} ->
+      {pos, ConwaysGame.Cell.is_alive?(pid)}
+    end)
+    |> Enum.into(%{})
+  end
+
+  defp get_neighbor_positions(x, y, width, height) do
     for dx <- -1..1,
         dy <- -1..1,
         {dx, dy} != {0, 0},
-        nx = x + dx,
-        ny = y + dy,
-        nx >= 0,
-        nx < width,
-        ny >= 0,
-        ny < height do
+        nx = x + dx, ny = y + dy,
+        nx >= 0, nx < width,
+        ny >= 0, ny < height do
       {nx, ny}
     end
   end
