@@ -9,19 +9,253 @@ defmodule ConwaysGame.Cell do
   @moduledoc """
   Processus représentant une cellule individuelle.
   """
-
   use GenServer
 
   @doc """
   Démarre un processus cellule à la position {x, y}.
   État initial: {alive?, neighbors_pids, position}
   """
-
   def start_link(x, y, alive? \\ false) do
     GenServer.start_link(__MODULE__, {x, y, alive?})
   end
 
-  def get_neighbor_positions(x, y, width, height) do
+  @doc """
+  Enregistre les PIDs des 8 voisins de cette cellule.
+  """
+  def set_neighbors(cell_pid, neighbors_pids) do
+    GenServer.cast(cell_pid, {:set_neighbors, neighbors_pids})
+  end
+
+  @doc """
+  Demande à la cellule de calculer son prochain état.
+  La cellule interroge ses voisins pour compter les vivants.
+  """
+  def compute_next_state(cell_pid) do
+    GenServer.call(cell_pid, :compute_next)
+  end
+
+  @doc """
+  Applique le nouvel état (après que toutes les cellules aient calculé).
+  """
+  def apply_next_state(cell_pid) do
+    GenServer.cast(cell_pid, :apply_next)
+  end
+
+  @doc """
+  Retourne si la cellule est vivante (pour que les voisins puissent interroger).
+  """
+  def is_alive?(cell_pid) do
+    GenServer.call(cell_pid, :is_alive)
+  end
+
+  def set_alive(cell_pid) do
+    GenServer.cast(cell_pid, :set_alive)
+  end
+
+  # Callbacks GenServer
+  def init({x, y, alive?}) do
+    state = %{
+      position: {x, y},
+      alive: alive?,
+      neighbors: [],
+      next_state: alive?
+    }
+
+    {:ok, state}
+  end
+
+  def handle_call(:is_alive, _from, state) do
+    {:reply, state.alive, state}
+  end
+
+  def handle_call(:compute_next, _from, state) do
+    # demande aux voisins s'ils sont vivants
+    alive_count =
+      state.neighbors
+      |> Enum.map(fn neighbor_pid ->
+        # Communication par message avec chaque voisin
+        is_alive?(neighbor_pid)
+      end)
+      |> Enum.count(& &1)
+
+    # Applique les règles du jeu de la vie
+    next_state =
+      case {state.alive, alive_count} do
+        {true, 2} -> true
+        {true, 3} -> true
+        {false, 3} -> true
+        _ -> false
+      end
+
+    new_state = %{state | next_state: next_state}
+    {:reply, :ok, new_state}
+  end
+
+  def handle_cast({:set_neighbors, neighbors}, state) do
+    {:noreply, %{state | neighbors: neighbors}}
+  end
+
+  def handle_cast(:apply_next, state) do
+    {:noreply, %{state | alive: state.next_state}}
+  end
+
+  def handle_cast({:set_alive, value}, state) do
+    {:noreply, %{state | alive: value, next_state: value}}
+  end
+
+  def handle_cast(:set_alive, state) do
+    {:noreply, %{state | alive: true, next_state: true}}
+  end
+end
+
+defmodule ConwaysGame.Grid do
+  @moduledoc """
+  Gestionnaire de la grille - supervise et coordonne toutes les cellules.
+  """
+
+  @doc """
+  Crée une grille de cellules (processus) sur plusieurs nœuds.
+  Retourne une map: %{{x, y} => cell_pid}
+  """
+  def create(width, height, nodes \\ [node()]) do
+    # Phase 1: Créer les cellules
+    grid_map =
+      for x <- 0..(width - 1),
+          y <- 0..(height - 1),
+          into: %{} do
+        target_node = select_node(x, y, nodes)
+
+        # Créer le processus avec spawn qui envoie le PID au parent
+        pid = create_cell_on_node(target_node, x, y, false)
+
+        {{x, y}, pid}
+      end
+
+    # Phase 2: Configurer les voisins
+    setup_neighbors(grid_map, width, height)
+
+    grid_map
+  end
+
+  @doc """
+  Initialise une grille avec un pattern aléatoire.
+  """
+  def random(width, height, density, nodes) do
+    grid_map =
+      for x <- 0..(width - 1),
+          y <- 0..(height - 1),
+          into: %{} do
+        alive? = :rand.uniform() < density
+        target_node = select_node(x, y, nodes)
+
+        pid = create_cell_on_node(target_node, x, y, alive?)
+
+        {{x, y}, pid}
+      end
+
+    setup_neighbors(grid_map, width, height)
+    grid_map
+  end
+
+  def glider(width, height, start_x \\ 1, start_y \\ 1, nodes \\ [node()]) do
+    # Créer une grille vide
+    grid_map =
+      for x <- 0..(width - 1),
+          y <- 0..(height - 1),
+          into: %{} do
+        target_node = select_node(x, y, nodes)
+        pid = create_cell_on_node(target_node, x, y, false)
+        {{x, y}, pid}
+      end
+
+    # Pattern du glider:
+    #   □■□
+    #   □□■
+    #   ■■■
+    glider_positions = [
+      {start_x + 1, start_y},
+      {start_x + 2, start_y + 1},
+      {start_x, start_y + 2},
+      {start_x + 1, start_y + 2},
+      {start_x + 2, start_y + 2}
+    ]
+
+    # Activer les cellules du glider
+    Enum.each(glider_positions, fn {x, y} ->
+      if x >= 0 and x < width and y >= 0 and y < height do
+        pid = Map.get(grid_map, {x, y})
+        if pid, do: ConwaysGame.Cell.set_alive(pid)
+      end
+    end)
+
+    setup_neighbors(grid_map, width, height)
+    grid_map
+  end
+
+  # Nouvelle fonction pour créer une cellule sur un nœud spécifique
+  defp create_cell_on_node(target_node, x, y, alive?) do
+    parent = self()
+    ref = make_ref()
+
+    # Spawner un processus sur le nœud cible
+    Node.spawn(target_node, fn ->
+      {:ok, pid} = ConwaysGame.Cell.start_link(x, y, alive?)
+      send(parent, {ref, pid})
+      # Garder ce processus en vie pour maintenir la cellule
+      Process.sleep(:infinity)
+    end)
+
+    # Attendre le PID
+    receive do
+      {^ref, pid} -> pid
+    after
+      5000 -> raise "Timeout creating cell at (#{x}, #{y}) on #{target_node}"
+    end
+  end
+
+  @doc """
+  Configure les voisins pour chaque cellule de la grille.
+  """
+  def setup_neighbors(grid_map, width, height) do
+    Enum.each(grid_map, fn {{x, y}, cell_pid} ->
+      neighbor_pids =
+        get_neighbor_positions(x, y, width, height)
+        |> Enum.map(fn pos -> Map.get(grid_map, pos) end)
+        |> Enum.reject(&is_nil/1)
+
+      # Message envoyé à la cellule avec ses voisins
+      ConwaysGame.Cell.set_neighbors(cell_pid, neighbor_pids)
+    end)
+  end
+
+  @doc """
+  Exécute une génération: toutes les cellules calculent puis appliquent leur nouvel état.
+  """
+  def next_generation(grid_map) do
+    # Phase 1: Calculer le prochain état
+    Enum.each(grid_map, fn {_pos, cell_pid} ->
+      ConwaysGame.Cell.compute_next_state(cell_pid)
+    end)
+
+    # Phase 2: Appliquer le nouvel état
+    Enum.each(grid_map, fn {_pos, cell_pid} ->
+      ConwaysGame.Cell.apply_next_state(cell_pid)
+    end)
+  end
+
+  @doc """
+  Récupère l'état actuel de toutes les cellules pour affichage.
+  Retourne: %{{x, y} => alive?}
+  """
+  def get_state(grid_map) do
+    grid_map
+    |> Enum.map(fn {pos, pid} ->
+      {pos, ConwaysGame.Cell.is_alive?(pid)}
+    end)
+    |> Enum.into(%{})
+  end
+
+  defp get_neighbor_positions(x, y, width, height) do
     for dx <- -1..1,
         dy <- -1..1,
         {dx, dy} != {0, 0},
@@ -70,16 +304,18 @@ defmodule ConwaysGame.Display do
   Affiche la grille dans le terminal.
   """
   def terminal(grid_state, width, height) do
-  IO.puts("\n" <> String.duplicate("=", width * 2))
+    IO.puts("\n" <> String.duplicate("=", width * 2))
 
-  for y <- 0..(height - 1) do
-    row = for x <- 0..(width - 1) do
-      if Map.get(grid_state, {x, y}, false), do: "██", else: "··"
+    for y <- 0..(height - 1) do
+      row =
+        for x <- 0..(width - 1) do
+          if Map.get(grid_state, {x, y}, false), do: "██", else: "··"
+        end
+
+      IO.puts(Enum.join(row, ""))
     end
-    IO.puts(Enum.join(row, ""))
-  end
 
-  IO.puts(String.duplicate("=", width * 2))
+    IO.puts(String.duplicate("=", width * 2))
   end
 end
 
@@ -161,35 +397,36 @@ defmodule ConwaysGame.Interactive do
     nodes = ConwaysGame.Cluster.list_nodes()
 
     Enum.each(nodes, fn node ->
-      ConwaysGame.DisplayServer.update_display(node, grid_state, width, height, generation, running)
+      ConwaysGame.DisplayServer.update_display(
+        node,
+        grid_state,
+        width,
+        height,
+        generation,
+        running
+      )
     end)
   end
 
   # Callbacks GenServer
 
   def init({width, height}) do
-    # 1. Connexion au cluster
-    auto_connect_cluster()
-
-    # 2. Attendre un peu que la connexion soit établie
-    Process.sleep(200)
-
-    # 3. Démarrer DisplayServer LOCAL
+    # Démarrer le DisplayServer sur le nœud local
     case ConwaysGame.DisplayServer.start_link() do
       {:ok, _} -> :ok
       {:error, {:already_started, _}} -> :ok
     end
 
-    # 4. Récupérer les nœuds (maintenant connectés)
+    # Démarrer le DisplayServer sur les nœuds distants
     nodes = ConwaysGame.Cluster.list_nodes()
 
-    # 5. Démarrer DisplayServer sur les nœuds DISTANTS
     IO.puts("📡 Initialisation des DisplayServers...")
+
     Enum.each(nodes -- [node()], fn remote_node ->
       ConwaysGame.DisplayServer.ensure_started_on_node(remote_node)
     end)
 
-    # 6. Pause pour s'assurer que tout est prêt
+    # Petite pause pour s'assurer que tout est prêt
     Process.sleep(500)
 
     IO.puts("Using nodes: #{inspect(nodes)}")
@@ -252,11 +489,13 @@ defmodule ConwaysGame.Interactive do
 
       if current do
         GenServer.cast(pid, {:set_alive, false})
+
         Enum.each(ConwaysGame.Cluster.list_nodes(), fn node ->
           :rpc.cast(node, IO, :puts, ["❌ Cellule (#{x}, #{y}) désactivée"])
         end)
       else
         GenServer.cast(pid, :set_alive)
+
         Enum.each(ConwaysGame.Cluster.list_nodes(), fn node ->
           :rpc.cast(node, IO, :puts, ["✅ Cellule (#{x}, #{y}) activée"])
         end)
@@ -284,7 +523,14 @@ defmodule ConwaysGame.Interactive do
     end)
 
     grid_state = ConwaysGame.Grid.get_state(new_state.grid)
-    broadcast_display(grid_state, new_state.width, new_state.height, new_state.generation, new_state.running)
+
+    broadcast_display(
+      grid_state,
+      new_state.width,
+      new_state.height,
+      new_state.generation,
+      new_state.running
+    )
 
     {:noreply, new_state}
   end
@@ -292,7 +538,14 @@ defmodule ConwaysGame.Interactive do
   def handle_cast({:load_random, density}, state) do
     if state.timer_ref, do: :timer.cancel(state.timer_ref)
 
-    grid = ConwaysGame.Grid.random(state.width, state.height, density, ConwaysGame.Cluster.list_nodes())
+    grid =
+      ConwaysGame.Grid.random(
+        state.width,
+        state.height,
+        density,
+        ConwaysGame.Cluster.list_nodes()
+      )
+
     new_state = %{state | grid: grid, generation: 0, running: false, timer_ref: nil}
 
     Enum.each(ConwaysGame.Cluster.list_nodes(), fn node ->
@@ -300,7 +553,14 @@ defmodule ConwaysGame.Interactive do
     end)
 
     grid_state = ConwaysGame.Grid.get_state(new_state.grid)
-    broadcast_display(grid_state, new_state.width, new_state.height, new_state.generation, new_state.running)
+
+    broadcast_display(
+      grid_state,
+      new_state.width,
+      new_state.height,
+      new_state.generation,
+      new_state.running
+    )
 
     {:noreply, new_state}
   end
@@ -308,7 +568,9 @@ defmodule ConwaysGame.Interactive do
   def handle_cast(:load_glider, state) do
     if state.timer_ref, do: :timer.cancel(state.timer_ref)
 
-    grid = ConwaysGame.Grid.glider(state.width, state.height, 5, 5, ConwaysGame.Cluster.list_nodes())
+    grid =
+      ConwaysGame.Grid.glider(state.width, state.height, 5, 5, ConwaysGame.Cluster.list_nodes())
+
     new_state = %{state | grid: grid, generation: 0, running: false, timer_ref: nil}
 
     Enum.each(ConwaysGame.Cluster.list_nodes(), fn node ->
@@ -316,7 +578,14 @@ defmodule ConwaysGame.Interactive do
     end)
 
     grid_state = ConwaysGame.Grid.get_state(new_state.grid)
-    broadcast_display(grid_state, new_state.width, new_state.height, new_state.generation, new_state.running)
+
+    broadcast_display(
+      grid_state,
+      new_state.width,
+      new_state.height,
+      new_state.generation,
+      new_state.running
+    )
 
     {:noreply, new_state}
   end
@@ -335,6 +604,7 @@ defmodule ConwaysGame.Interactive do
       height: state.height,
       controller_node: node()
     }
+
     {:reply, status, state}
   end
 
@@ -343,7 +613,14 @@ defmodule ConwaysGame.Interactive do
     new_state = %{state | generation: state.generation + 1}
 
     grid_state = ConwaysGame.Grid.get_state(new_state.grid)
-    broadcast_display(grid_state, new_state.width, new_state.height, new_state.generation, new_state.running)
+
+    broadcast_display(
+      grid_state,
+      new_state.width,
+      new_state.height,
+      new_state.generation,
+      new_state.running
+    )
 
     {:noreply, new_state}
   end
@@ -395,28 +672,38 @@ defmodule ConwaysGame.DisplayServer do
   end
 
   def ensure_started_on_node(node) do
-    result = :rpc.call(node, ConwaysGame.DisplayServer, :start_link, [[]])
+    case :rpc.call(node, __MODULE__, :start_link, [[]]) do
+      {:ok, _pid} ->
+        IO.puts("✅ DisplayServer démarré sur #{node}")
+        :ok
 
-    case result do
-      {:ok, pid} ->
-        IO.puts("✅ DisplayServer démarré sur #{node} (PID: #{inspect(pid)})")
+      {:error, {:already_started, _pid}} ->
+        IO.puts("ℹ️  DisplayServer déjà actif sur #{node}")
         :ok
-      {:error, {:already_started, pid}} ->
-        IO.puts("ℹ️  DisplayServer actif sur #{node} (PID: #{inspect(pid)})")
-        :ok
-      {:badrpc, reason} ->
-        IO.puts("❌ RPC failed sur #{node}: #{inspect(reason)}")
-        :error
+
       error ->
-        IO.puts("❌ Erreur sur #{node}: #{inspect(error)}")
+        IO.puts("❌ Erreur démarrage DisplayServer sur #{node}: #{inspect(error)}")
         :error
+    end
+  end
+
+  defp auto_connect_cluster do
+    target_nodes = Application.get_env(:conways_game, :cluster_nodes, [])
+    nodes_to_connect = target_nodes -- [node()]
+
+    if nodes_to_connect != [] do
+      IO.puts("🔗 Connexion automatique au cluster...")
+      ConwaysGame.Cluster.connect_nodes(nodes_to_connect)
     end
   end
 
   def update_display(node, grid_state, width, height, generation, running) do
     # Utiliser directement GenServer.cast sans vérifier - le cast échouera silencieusement si le serveur n'existe pas
     try do
-      GenServer.cast({__MODULE__, node}, {:display, grid_state, width, height, generation, running})
+      GenServer.cast(
+        {__MODULE__, node},
+        {:display, grid_state, width, height, generation, running}
+      )
     catch
       :exit, _ ->
         IO.puts("⚠️  Impossible d'envoyer à DisplayServer sur #{node}")
