@@ -1,16 +1,27 @@
 \documentclass{article}
 \usepackage{graphicx} % Required for inserting images
 
-\title{systèmes concurrents}
-\author{Tim Wyrfell}
+\title{Recreation of the game of life using Elixir in concurrent programming}
+\author{Tim Gouvernon \& Tanguy Godat}
 \date{November 2025}
 
 \begin{document}
 
 \maketitle
-
+\tableofcontents
+\newpage
 \section{Problem statement}
+Conway's Game of Life is a cellular automaton simulation, our goal is to develop it following those constraints :
+\begin{itemize}
+    \item Each cell is a different Elixir process
+    \item The cells should communicate exchanging messages
+    \item At least two BEAM VMs have to be used to demonstrate ???
+    \item A visualization using the terminal to showcase the program running 
+\end{itemize}
+Those constraints will compel us to use some new technologies for us like GenServer and Supervisor.
+
 \section{State-of-the-art}
+
 \section{Presentation of the solution}
 \section{Validation/evaluation of the solution}
 \section{Discussion of the results}
