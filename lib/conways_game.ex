@@ -264,7 +264,7 @@ defmodule ConwaysGame.Grid do
 
   defp select_node(x, y, nodes) do
     # Répartition équilibrée basée sur la position
-    index = rem(x * 1000 + y, length(nodes))
+    index = rem(x + y, length(nodes))
     Enum.at(nodes, index)
   end
 end
@@ -336,57 +336,82 @@ defmodule ConwaysGame.Cluster do
   end
 end
 
-# Ajoutez ce module à la fin de lib/conways_game.ex
-
 defmodule ConwaysGame.Interactive do
   @moduledoc """
   Interface interactive en terminal pour le jeu de la vie.
+  Distribue l'affichage sur tous les nœuds connectés.
+  Contrôlable depuis n'importe quel nœud.
   """
   use GenServer
 
-  # API Client
+  # API Client - Modifiées pour fonctionner depuis n'importe quel nœud
 
   def start_link(width \\ 30, height \\ 30) do
-    GenServer.start_link(__MODULE__, {width, height}, name: __MODULE__)
+    # Enregistrement global pour accès depuis tous les nœuds
+    GenServer.start_link(__MODULE__, {width, height}, name: {:global, __MODULE__})
   end
 
   def start_game do
-    GenServer.cast(__MODULE__, :start)
+    GenServer.cast({:global, __MODULE__}, :start)
   end
 
   def pause_game do
-    GenServer.cast(__MODULE__, :pause)
+    GenServer.cast({:global, __MODULE__}, :pause)
   end
 
   def toggle_cell(x, y) do
-    GenServer.cast(__MODULE__, {:toggle_cell, x, y})
+    GenServer.cast({:global, __MODULE__}, {:toggle_cell, x, y})
   end
 
   def reset do
-    GenServer.cast(__MODULE__, :reset)
+    GenServer.cast({:global, __MODULE__}, :reset)
   end
 
   def load_random(density \\ 0.3) do
-    GenServer.cast(__MODULE__, {:load_random, density})
+    GenServer.cast({:global, __MODULE__}, {:load_random, density})
   end
 
   def load_glider do
-    GenServer.cast(__MODULE__, :load_glider)
+    GenServer.cast({:global, __MODULE__}, :load_glider)
   end
 
   def show do
-    GenServer.cast(__MODULE__, :show)
+    GenServer.cast({:global, __MODULE__}, :show)
   end
 
   def status do
-    GenServer.call(__MODULE__, :status)
+    GenServer.call({:global, __MODULE__}, :status)
+  end
+
+  # Diffuser l'affichage sur tous les DisplayServers
+  defp broadcast_display(grid_state, width, height, generation, running) do
+    nodes = ConwaysGame.Cluster.list_nodes()
+
+    Enum.each(nodes, fn node ->
+      ConwaysGame.DisplayServer.update_display(node, grid_state, width, height, generation, running)
+    end)
   end
 
   # Callbacks GenServer
 
   def init({width, height}) do
-    # Distributed (multiple nodes):
+    # Démarrer le DisplayServer sur le nœud local
+    case ConwaysGame.DisplayServer.start_link() do
+      {:ok, _} -> :ok
+      {:error, {:already_started, _}} -> :ok
+    end
+
+    # Démarrer le DisplayServer sur les nœuds distants
     nodes = ConwaysGame.Cluster.list_nodes()
+
+    IO.puts("📡 Initialisation des DisplayServers...")
+    Enum.each(nodes -- [node()], fn remote_node ->
+      ConwaysGame.DisplayServer.ensure_started_on_node(remote_node)
+    end)
+
+    # Petite pause pour s'assurer que tout est prêt
+    Process.sleep(500)
+
     IO.puts("Using nodes: #{inspect(nodes)}")
     grid = ConwaysGame.Grid.create(width, height, nodes)
 
@@ -401,8 +426,12 @@ defmodule ConwaysGame.Interactive do
 
     IO.puts("\n🎮 Conway's Game of Life - Mode Interactif")
     IO.puts("Grille: #{width}x#{height}")
+    IO.puts("⚡ Contrôlable depuis n'importe quel nœud du cluster")
     print_help()
-    display_grid(state)
+
+    # Afficher sur tous les nœuds
+    grid_state = ConwaysGame.Grid.get_state(state.grid)
+    broadcast_display(grid_state, state.width, state.height, state.generation, state.running)
 
     {:ok, state}
   end
@@ -411,7 +440,11 @@ defmodule ConwaysGame.Interactive do
     if state.running do
       {:noreply, state}
     else
-      IO.puts("▶️  Démarrage de la simulation...")
+      # Broadcast sur tous les nœuds
+      Enum.each(ConwaysGame.Cluster.list_nodes(), fn node ->
+        :rpc.cast(node, IO, :puts, ["▶️  Démarrage de la simulation..."])
+      end)
+
       {:ok, timer_ref} = :timer.send_interval(500, self(), :tick)
       {:noreply, %{state | running: true, timer_ref: timer_ref}}
     end
@@ -420,7 +453,12 @@ defmodule ConwaysGame.Interactive do
   def handle_cast(:pause, state) do
     if state.running and state.timer_ref do
       :timer.cancel(state.timer_ref)
-      IO.puts("⏸️  Simulation en pause")
+
+      # Broadcast sur tous les nœuds
+      Enum.each(ConwaysGame.Cluster.list_nodes(), fn node ->
+        :rpc.cast(node, IO, :puts, ["⏸️  Simulation en pause"])
+      end)
+
       {:noreply, %{state | running: false, timer_ref: nil}}
     else
       {:noreply, state}
@@ -434,15 +472,22 @@ defmodule ConwaysGame.Interactive do
 
       if current do
         GenServer.cast(pid, {:set_alive, false})
-        IO.puts("❌ Cellule (#{x}, #{y}) désactivée")
+        Enum.each(ConwaysGame.Cluster.list_nodes(), fn node ->
+          :rpc.cast(node, IO, :puts, ["❌ Cellule (#{x}, #{y}) désactivée"])
+        end)
       else
         GenServer.cast(pid, :set_alive)
-        IO.puts("✅ Cellule (#{x}, #{y}) activée")
+        Enum.each(ConwaysGame.Cluster.list_nodes(), fn node ->
+          :rpc.cast(node, IO, :puts, ["✅ Cellule (#{x}, #{y}) activée"])
+        end)
       end
 
-      display_grid(state)
+      grid_state = ConwaysGame.Grid.get_state(state.grid)
+      broadcast_display(grid_state, state.width, state.height, state.generation, state.running)
     else
-      IO.puts("⚠️  Position invalide: (#{x}, #{y})")
+      Enum.each(ConwaysGame.Cluster.list_nodes(), fn node ->
+        :rpc.cast(node, IO, :puts, ["⚠️  Position invalide: (#{x}, #{y})"])
+      end)
     end
 
     {:noreply, state}
@@ -454,8 +499,12 @@ defmodule ConwaysGame.Interactive do
     grid = ConwaysGame.Grid.create(state.width, state.height)
     new_state = %{state | grid: grid, generation: 0, running: false, timer_ref: nil}
 
-    IO.puts("🔄 Grille réinitialisée")
-    display_grid(new_state)
+    Enum.each(ConwaysGame.Cluster.list_nodes(), fn node ->
+      :rpc.cast(node, IO, :puts, ["🔄 Grille réinitialisée"])
+    end)
+
+    grid_state = ConwaysGame.Grid.get_state(new_state.grid)
+    broadcast_display(grid_state, new_state.width, new_state.height, new_state.generation, new_state.running)
 
     {:noreply, new_state}
   end
@@ -463,11 +512,15 @@ defmodule ConwaysGame.Interactive do
   def handle_cast({:load_random, density}, state) do
     if state.timer_ref, do: :timer.cancel(state.timer_ref)
 
-    grid = ConwaysGame.Grid.random(state.width, state.height, density, [node()])
+    grid = ConwaysGame.Grid.random(state.width, state.height, density, ConwaysGame.Cluster.list_nodes())
     new_state = %{state | grid: grid, generation: 0, running: false, timer_ref: nil}
 
-    IO.puts("🎲 Grille aléatoire chargée (densité: #{density})")
-    display_grid(new_state)
+    Enum.each(ConwaysGame.Cluster.list_nodes(), fn node ->
+      :rpc.cast(node, IO, :puts, ["🎲 Grille aléatoire chargée (densité: #{density})"])
+    end)
+
+    grid_state = ConwaysGame.Grid.get_state(new_state.grid)
+    broadcast_display(grid_state, new_state.width, new_state.height, new_state.generation, new_state.running)
 
     {:noreply, new_state}
   end
@@ -475,17 +528,22 @@ defmodule ConwaysGame.Interactive do
   def handle_cast(:load_glider, state) do
     if state.timer_ref, do: :timer.cancel(state.timer_ref)
 
-    grid = ConwaysGame.Grid.glider(state.width, state.height, 5, 5)
+    grid = ConwaysGame.Grid.glider(state.width, state.height, 5, 5, ConwaysGame.Cluster.list_nodes())
     new_state = %{state | grid: grid, generation: 0, running: false, timer_ref: nil}
 
-    IO.puts("🛸 Glider chargé")
-    display_grid(new_state)
+    Enum.each(ConwaysGame.Cluster.list_nodes(), fn node ->
+      :rpc.cast(node, IO, :puts, ["🛸 Glider chargé"])
+    end)
+
+    grid_state = ConwaysGame.Grid.get_state(new_state.grid)
+    broadcast_display(grid_state, new_state.width, new_state.height, new_state.generation, new_state.running)
 
     {:noreply, new_state}
   end
 
   def handle_cast(:show, state) do
-    display_grid(state)
+    grid_state = ConwaysGame.Grid.get_state(state.grid)
+    broadcast_display(grid_state, state.width, state.height, state.generation, state.running)
     {:noreply, state}
   end
 
@@ -494,7 +552,8 @@ defmodule ConwaysGame.Interactive do
       generation: state.generation,
       running: state.running,
       width: state.width,
-      height: state.height
+      height: state.height,
+      controller_node: node()
     }
     {:reply, status, state}
   end
@@ -503,27 +562,18 @@ defmodule ConwaysGame.Interactive do
     ConwaysGame.Grid.next_generation(state.grid)
     new_state = %{state | generation: state.generation + 1}
 
-    display_grid(new_state)  # Enlever le IO.puts avant
+    grid_state = ConwaysGame.Grid.get_state(new_state.grid)
+    broadcast_display(grid_state, new_state.width, new_state.height, new_state.generation, new_state.running)
 
     {:noreply, new_state}
   end
 
   # Helpers privés
 
-  defp display_grid(state) do
-    # Clear screen avec codes ANSI universels
-    IO.write("\e[2J\e[H")
-
-    grid_state = ConwaysGame.Grid.get_state(state.grid)
-    ConwaysGame.Display.terminal(grid_state, state.width, state.height)
-
-    IO.puts("Status: #{if state.running, do: "▶️  Running", else: "⏸️  Paused"} | Génération: #{state.generation}")
-  end
-
   defp print_help do
     IO.puts("""
 
-    📖 Commandes disponibles:
+    📖 Commandes disponibles (depuis n'importe quel terminal):
 
     ConwaysGame.Interactive.start_game()      # ▶️  Démarrer
     ConwaysGame.Interactive.pause_game()      # ⏸️  Pause
@@ -538,5 +588,60 @@ defmodule ConwaysGame.Interactive do
     alias ConwaysGame.Interactive, as: Game
     Game.start_game()
     """)
+  end
+end
+
+# Ajoutez ce module à la fin de lib/conways_game.ex
+
+defmodule ConwaysGame.DisplayServer do
+  @moduledoc """
+  Serveur d'affichage local sur chaque nœud.
+  Reçoit les mises à jour et affiche dans son terminal.
+  """
+  use GenServer
+
+  def start_link(_opts \\ []) do
+    GenServer.start_link(__MODULE__, :ok, name: __MODULE__)
+  end
+
+  def ensure_started_on_node(node) do
+    case :rpc.call(node, __MODULE__, :start_link, [[]]) do
+      {:ok, _pid} ->
+        IO.puts("✅ DisplayServer démarré sur #{node}")
+        :ok
+      {:error, {:already_started, _pid}} ->
+        IO.puts("ℹ️  DisplayServer déjà actif sur #{node}")
+        :ok
+      error ->
+        IO.puts("❌ Erreur démarrage DisplayServer sur #{node}: #{inspect(error)}")
+        :error
+    end
+  end
+
+  def update_display(node, grid_state, width, height, generation, running) do
+    # Utiliser directement GenServer.cast sans vérifier - le cast échouera silencieusement si le serveur n'existe pas
+    try do
+      GenServer.cast({__MODULE__, node}, {:display, grid_state, width, height, generation, running})
+    catch
+      :exit, _ ->
+        IO.puts("⚠️  Impossible d'envoyer à DisplayServer sur #{node}")
+    end
+  end
+
+  def init(:ok) do
+    IO.puts("🖥️  DisplayServer démarré sur #{node()}")
+    {:ok, %{}}
+  end
+
+  def handle_cast({:display, grid_state, width, height, generation, running}, state) do
+    # Clear screen
+    IO.write("\e[2J\e[H")
+
+    ConwaysGame.Display.terminal(grid_state, width, height)
+
+    status_text = if running, do: "▶️  Running", else: "⏸️  Paused"
+    IO.puts("Status: #{status_text} | Génération: #{generation} | Nœud: #{node()}")
+
+    {:noreply, state}
   end
 end
