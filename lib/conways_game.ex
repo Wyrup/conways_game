@@ -589,6 +589,16 @@ defmodule ConwaysGame.Interactive do
     Game.start_game()
     """)
   end
+
+  defp auto_connect_cluster do
+    target_nodes = Application.get_env(:conways_game, :cluster_nodes, [])
+    nodes_to_connect = target_nodes -- [node()]
+
+    if nodes_to_connect != [] do
+      IO.puts("🔗 Connexion automatique au cluster...")
+      ConwaysGame.Cluster.connect_nodes(nodes_to_connect)
+    end
+  end
 end
 
 # Ajoutez ce module à la fin de lib/conways_game.ex
@@ -615,6 +625,16 @@ defmodule ConwaysGame.DisplayServer do
       error ->
         IO.puts("❌ Erreur démarrage DisplayServer sur #{node}: #{inspect(error)}")
         :error
+    end
+  end
+
+  defp auto_connect_cluster do
+    target_nodes = Application.get_env(:conways_game, :cluster_nodes, [])
+    nodes_to_connect = target_nodes -- [node()]
+
+    if nodes_to_connect != [] do
+      IO.puts("🔗 Connexion automatique au cluster...")
+      ConwaysGame.Cluster.connect_nodes(nodes_to_connect)
     end
   end
 
