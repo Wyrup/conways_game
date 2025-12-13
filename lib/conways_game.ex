@@ -395,21 +395,28 @@ defmodule ConwaysGame.Interactive do
   # Callbacks GenServer
 
   def init({width, height}) do
-    # Démarrer le DisplayServer sur le nœud local
+    # 1. Connexion au cluster
+    auto_connect_cluster()
+
+    # 2. Attendre un peu que la connexion soit établie
+    Process.sleep(200)
+
+    # 3. Démarrer DisplayServer LOCAL
     case ConwaysGame.DisplayServer.start_link() do
       {:ok, _} -> :ok
       {:error, {:already_started, _}} -> :ok
     end
 
-    # Démarrer le DisplayServer sur les nœuds distants
+    # 4. Récupérer les nœuds (maintenant connectés)
     nodes = ConwaysGame.Cluster.list_nodes()
 
+    # 5. Démarrer DisplayServer sur les nœuds DISTANTS
     IO.puts("📡 Initialisation des DisplayServers...")
     Enum.each(nodes -- [node()], fn remote_node ->
       ConwaysGame.DisplayServer.ensure_started_on_node(remote_node)
     end)
 
-    # Petite pause pour s'assurer que tout est prêt
+    # 6. Pause pour s'assurer que tout est prêt
     Process.sleep(500)
 
     IO.puts("Using nodes: #{inspect(nodes)}")
@@ -615,26 +622,21 @@ defmodule ConwaysGame.DisplayServer do
   end
 
   def ensure_started_on_node(node) do
-    case :rpc.call(node, __MODULE__, :start_link, [[]]) do
-      {:ok, _pid} ->
-        IO.puts("✅ DisplayServer démarré sur #{node}")
+    result = :rpc.call(node, ConwaysGame.DisplayServer, :start_link, [[]])
+
+    case result do
+      {:ok, pid} ->
+        IO.puts("✅ DisplayServer démarré sur #{node} (PID: #{inspect(pid)})")
         :ok
-      {:error, {:already_started, _pid}} ->
-        IO.puts("ℹ️  DisplayServer déjà actif sur #{node}")
+      {:error, {:already_started, pid}} ->
+        IO.puts("ℹ️  DisplayServer actif sur #{node} (PID: #{inspect(pid)})")
         :ok
-      error ->
-        IO.puts("❌ Erreur démarrage DisplayServer sur #{node}: #{inspect(error)}")
+      {:badrpc, reason} ->
+        IO.puts("❌ RPC failed sur #{node}: #{inspect(reason)}")
         :error
-    end
-  end
-
-  defp auto_connect_cluster do
-    target_nodes = Application.get_env(:conways_game, :cluster_nodes, [])
-    nodes_to_connect = target_nodes -- [node()]
-
-    if nodes_to_connect != [] do
-      IO.puts("🔗 Connexion automatique au cluster...")
-      ConwaysGame.Cluster.connect_nodes(nodes_to_connect)
+      error ->
+        IO.puts("❌ Erreur sur #{node}: #{inspect(error)}")
+        :error
     end
   end
 
