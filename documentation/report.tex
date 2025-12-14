@@ -21,9 +21,13 @@ Conway's Game of Life is a cellular automaton simulation, our goal is to develop
 Those constraints will compel us to use some new technologies for us like GenServer and Supervisor.
 
 \section{State-of-the-art}
+The state-of-the-art in distributed cellular automata simulations, such as Conway's Game of Life, leverages Elixir's concurrency model for scalable, fault-tolerant implementations. Elixir projects typically package simulations as Mix applications, utilizing GenServer for cell processes that manage state and message-passing for neighbor interactions. Supervisors oversee process trees, ensuring restarts on failures, while libcluster enables dynamic node clustering across BEAM VMs on separate machines or Docker containers.\\
 
+Using GenServer for each cell provides isolated state management and handles message-passing between neighbors reliably, ensuring the Game of Life's rules execute fault-tolerantly even under high concurrency. Supervisors maintain process lifecycles across crashes, preserving simulation stability during distributed runs. Libcluster simplifies multi-node deployment on separate VMs or Docker, enabling scalable cell distribution beyond single-machine limits, directly supporting your project's cross-VM requirement.
 \section{Presentation of the solution}
+
 \section{Validation/evaluation of the solution}
+\section{Limitations} When creating a new grid, the cells in the previous one are still alive and forgotten
 \section{Discussion of the results}
 \section{Bibliography}
 \section{Appendix}
