@@ -7,7 +7,7 @@ defmodule ConwaysGame do
   @doc """
   Point d'entrée principal pour lancer le jeu.
   """
-  def start(width \\ 30, height \\ 20) do
+  def start(width \\ 30, height \\ 30) do
 
     nodes = [node() | Node.list()]
     IO.puts("Distribution sur #{length(nodes)} nœud(s): #{inspect(nodes)}")
