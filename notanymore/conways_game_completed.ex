@@ -7,7 +7,10 @@ defmodule ConwaysGame do
   @doc """
   Point d'entrée principal pour lancer le jeu.
   """
-  def start(width \\ 30, height \\ 20, nodes \\ [node()]) do
+  def start(width \\ 30, height \\ 20) do
+
+    nodes = [node() | Node.list()]
+    IO.puts("Distribution sur #{length(nodes)} nœud(s): #{inspect(nodes)}")
     IO.puts("Création de la grille #{width}x#{height}...")
     grid = ConwaysGame.Grid.create(width, height, nodes)
 
