@@ -56,6 +56,7 @@ defmodule ConwaysGame.Cell do
     GenServer.call(cell_pid, {:set_alive, alive?})
   end
 
+  @impl true
   def init({x, y, alive?}) do
     state = %{
       position: {x, y},
@@ -67,18 +68,20 @@ defmodule ConwaysGame.Cell do
     {:ok, state}
   end
 
+  @impl true
   def handle_call({:set_neighbors, neighbors_pids}, _from, state) do
     {:reply, :ok, %{state | neighbors: neighbors_pids}}
   end
 
+  @impl true
   def handle_call(:compute_next, _from, state) do
     alive_count =
       Enum.count(
         Enum.map(state.neighbors, fn neighbors_pid ->
           is_alive?(neighbors_pid)
         end),
-        fn {_, x, _} ->
-          x == true
+        fn {_, alive?, _} ->
+          alive? == true
         end
       )
 
@@ -94,14 +97,17 @@ defmodule ConwaysGame.Cell do
     {:reply, :ok, new_state}
   end
 
+  @impl true
   def handle_call(:apply_next, _from, state) do
     {:reply, :ok, %{state | alive: state.next_state}}
   end
 
+  @impl true
   def handle_call(:is_alive, _from, state) do
     {:reply, state.alive, state}
   end
 
+  @impl true
   def handle_call({:set_alive, alive?}, _from, state) do
     {:reply, :ok, %{state | alive: alive?, next_state: alive?}}
   end
@@ -127,7 +133,7 @@ defmodule ConwaysGame.Grid do
   """
   use GenServer
 
-  def start_link(width, heught, nodes \\ [node()]) do
+  def start_link(width, height, nodes \\ [node()]) do
   end
 
   @doc """
@@ -140,17 +146,34 @@ defmodule ConwaysGame.Grid do
       for x <- 0..(width - 1),
           y <- 0..(height - 1),
           into: %{} do
-        target_node = select_node(x, y, nodes)
-
         # Créer le processus avec spawn qui envoie le PID au parent
-        pid = create_cell_on_node(target_node, x, y, false)
-
-        {{x, y}, pid}
+        {{x, y}, spawn_cell(select_node(x, y, nodes), x, y, false)}
       end
 
     # Phase 2: Configurer les voisins
     setup_neighbors(grid_map, width, height)
 
     grid_map
+  end
+
+  defp select_node(x, y, nodes), do: Enum.at(nodes, rem(x + y, length(nodes)))
+
+  defp spawn_cell(node, x, y, alive?) do
+    parent = self()
+
+    {:ok, pid} = ConwaysGame.Cell.start_link(x, y, alive?)
+
+    ConwaysGame.Cell.start_link(fn ->
+      do_something()
+      send(parent, :work_is_done)
+    end)
+
+    receive do
+      :work_is_done ->
+        :ok
+        # after
+        #   #### Optional timeout
+        #   30_000 -> :timeout
+    end
   end
 end
