@@ -111,20 +111,6 @@ defmodule ConwaysGame.Cell do
   def handle_call({:set_alive, alive?}, _from, state) do
     {:reply, :ok, %{state | alive: alive?, next_state: alive?}}
   end
-
-  defp get_neighbor_positions(x, y, width, height) do
-    for dx <- -1..1,
-        dy <- -1..1,
-        {dx, dy} != {0, 0},
-        nx = x + dx,
-        ny = y + dy,
-        nx >= 0,
-        nx < width,
-        ny >= 0,
-        ny < height do
-      {nx, ny}
-    end
-  end
 end
 
 defmodule ConwaysGame.Grid do
@@ -141,7 +127,6 @@ defmodule ConwaysGame.Grid do
   Retourne une map: %{{x, y} => cell_pid}
   """
   def create(width, height, nodes \\ [node()]) do
-
     # Phase 1: Créer les cellules
     grid_map =
       for x <- 0..(width - 1),
@@ -167,7 +152,9 @@ defmodule ConwaysGame.Grid do
 
   def change_cell(grid_map, {x, y}) do
     case pid = Map.get(grid_map, {x, y}) do
-      nil -> :error
+      nil ->
+        :error
+
       pid ->
         current_state = ConwaysGame.Cell.is_alive?(pid)
         ConwaysGame.Cell.set_alive(pid, not current_state)
@@ -194,11 +181,17 @@ defmodule ConwaysGame.Grid do
 
   defp setup_neighbors(grid, width, height) do
     Enum.each(grid, fn {{x, y}, pid} ->
-      neighbors = for dx <- -1..1, dy <- -1..1,
-        {dx, dy} != {0, 0},
-        nx = x + dx, ny = y + dy,
-        nx >= 0 and nx < width and ny >= 0 and ny < height,
+      neighbors =
+        for dx <- -1..1,
+            dy <- -1..1,
+            {dx, dy} != {0, 0},
+            nx = x + dx,
+            ny = y + dy,
+            nx >= 0 and nx < width and ny >= 0 and ny < height,
+            do: Map.get(grid, {x, y})
 
+      # Enum.reject is_nil potentiel
+      ConwaysGame.Cell.set_neighbors(pid, neighbors)
     end)
   end
 end
