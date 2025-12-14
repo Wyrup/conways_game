@@ -28,7 +28,8 @@ defmodule ConwaysGame do
   end
 
   defp interactive_loop(game_pid, grid) do
-    input = IO.gets("> ") |> String.trim()
+    raw_input = IO.gets("> ")
+    input = String.trim(raw_input)
 
     case input do
       "s" ->
@@ -45,7 +46,8 @@ defmodule ConwaysGame do
 
       "c" ->
         IO.puts("Entrez les coordonnées (x,y):")
-        coords = IO.gets("coords> ") |> String.trim()
+        raw_coords = IO.gets("coords> ")
+        coords = String.trim(raw_coords)
         case parse_coords(coords) do
           {:ok, x, y} ->
             ConwaysGame.GameLoop.toggle_cell(game_pid, {x, y})
@@ -69,8 +71,10 @@ defmodule ConwaysGame do
   defp parse_coords(coords) do
     case String.split(coords, ",") do
       [x_str, y_str] ->
-        with {x, _} <- Integer.parse(String.trim(x_str)),
-             {y, _} <- Integer.parse(String.trim(y_str)) do
+        trimmed_x = String.trim(x_str)
+        trimmed_y = String.trim(y_str)
+        with {x, _} <- Integer.parse(trimmed_x),
+             {y, _} <- Integer.parse(trimmed_y) do
           {:ok, x, y}
         else
           _ -> :error
@@ -151,10 +155,8 @@ defmodule ConwaysGame.Cell do
   @impl true
   def handle_call(:compute_next, _from, state) do
     # FIX: is_alive? retourne un booléen, pas un tuple
-    alive_count =
-      state.neighbors
-      |> Enum.map(fn neighbor_pid -> is_alive?(neighbor_pid) end)
-      |> Enum.count(fn alive? -> alive? == true end)
+    alive_statuses = Enum.map(state.neighbors, fn neighbor_pid -> is_alive?(neighbor_pid) end)
+    alive_count = Enum.count(alive_statuses, fn alive? -> alive? == true end)
 
     next_state =
       case {state.alive, alive_count} do
@@ -267,9 +269,9 @@ defmodule ConwaysGame.Grid do
           # FIX: utiliser nx, ny au lieu de x, y
           Map.get(grid, {nx, ny})
         end
-        |> Enum.reject(&is_nil/1)
 
-      ConwaysGame.Cell.set_neighbors(pid, neighbors)
+      filtered_neighbors = Enum.reject(neighbors, &is_nil/1)
+      ConwaysGame.Cell.set_neighbors(pid, filtered_neighbors)
     end)
   end
 end
@@ -397,7 +399,8 @@ defmodule ConwaysGame.GameLoop do
 
   defp render(state) do
     # Efface l'écran
-    IO.write(IO.ANSI.clear() <> IO.ANSI.home())
+    clear_screen = IO.ANSI.clear() <> IO.ANSI.home()
+    IO.write(clear_screen)
 
     # Header
     status = if state.running, do: "RUNNING", else: "PAUSED"
@@ -417,9 +420,9 @@ defmodule ConwaysGame.GameLoop do
             IO.ANSI.black() <> "··" <> IO.ANSI.reset()
           end
         end
-        |> Enum.join("")
 
-      IO.puts(line)
+      joined_line = Enum.join(line, "")
+      IO.puts(joined_line)
     end
 
     IO.puts("")
