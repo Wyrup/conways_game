@@ -141,13 +141,15 @@ defmodule ConwaysGame.Grid do
   Retourne une map: %{{x, y} => cell_pid}
   """
   def create(width, height, nodes \\ [node()]) do
+
     # Phase 1: Créer les cellules
     grid_map =
       for x <- 0..(width - 1),
           y <- 0..(height - 1),
           into: %{} do
         # Créer le processus avec spawn qui envoie le PID au parent
-        {{x, y}, spawn_cell(select_node(x, y, nodes), x, y, false)}
+        # {{x, y}, spawn_cell(select_node(x, y, nodes), x, y, false)}
+        spawn_cell(select_node(x, y, nodes), x, y, false)
       end
 
     # Phase 2: Configurer les voisins
@@ -156,24 +158,47 @@ defmodule ConwaysGame.Grid do
     grid_map
   end
 
+  def fill_random(grid_map, density \\ 0.3) do
+    Enum.each(grid_map, fn {_pos, pid} ->
+      alive? = :rand.uniform() < density
+      ConwaysGame.Cell.set_alive(pid, alive?)
+    end)
+  end
+
+  def change_cell(grid_map, {x, y}) do
+    case pid = Map.get(grid_map, {x, y}) do
+      nil -> :error
+      pid ->
+        current_state = ConwaysGame.Cell.is_alive?(pid)
+        ConwaysGame.Cell.set_alive(pid, not current_state)
+        :ok
+    end
+  end
+
   defp select_node(x, y, nodes), do: Enum.at(nodes, rem(x + y, length(nodes)))
 
   defp spawn_cell(node, x, y, alive?) do
-    parent = self()
-
-    {:ok, pid} = ConwaysGame.Cell.start_link(x, y, alive?)
-
-    ConwaysGame.Cell.start_link(fn ->
-      do_something()
-      send(parent, :work_is_done)
+    Node.spawn_link(node, fn ->
+      {:ok, pid} = ConwaysGame.Cell.start_link(x, y, alive?)
+      send(self(), {{x, y}, pid})
     end)
 
     receive do
-      :work_is_done ->
-        :ok
+      {{x_, y_}, pid_} ->
+        {{x_, y_}, pid_}
         # after
         #   #### Optional timeout
         #   30_000 -> :timeout
     end
+  end
+
+  defp setup_neighbors(grid, width, height) do
+    Enum.each(grid, fn {{x, y}, pid} ->
+      neighbors = for dx <- -1..1, dy <- -1..1,
+        {dx, dy} != {0, 0},
+        nx = x + dx, ny = y + dy,
+        nx >= 0 and nx < width and ny >= 0 and ny < height,
+
+    end)
   end
 end
