@@ -411,9 +411,9 @@ defmodule ConwaysGame.GameLoop do
 
     # Header
     status = if state.running, do: "RUNNING", else: "PAUSED"
-    IO.puts("╔═══════════════════════════════════════════════════════╗")
-    IO.puts("║  Conway's Game of Life - Generation: #{state.generation} [#{status}]")
-    IO.puts("╚═══════════════════════════════════════════════════════╝")
+    IO.puts("=========================================================")
+    IO.puts("  Conway's Game of Life - Generation: #{state.generation} [#{status}]")
+    IO.puts("=========================================================")
     IO.puts("")
 
     # Grille
