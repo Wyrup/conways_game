@@ -13,8 +13,8 @@ defmodule ConwaysGame do
     IO.puts("Création de la grille #{width}x#{height}...")
     grid = ConwaysGame.Grid.create(width, height, nodes)
 
-    IO.puts("Initialisation aléatoire...")
-    ConwaysGame.Grid.fill_random(grid, 0.3)
+    # IO.puts("Initialisation aléatoire...")
+    # ConwaysGame.Grid.fill_random(grid, 0.3)
 
     {:ok, game_pid} = ConwaysGame.GameLoop.start_link(grid, width, height)
 
@@ -162,7 +162,6 @@ defmodule ConwaysGame.Cell do
 
   @impl true
   def handle_call(:compute_next, _from, state) do
-    # FIX: is_alive? retourne un booléen, pas un tuple
     alive_statuses = Enum.map(state.neighbors, fn neighbor_pid -> is_alive?(neighbor_pid) end)
     alive_count = Enum.count(alive_statuses, fn alive? -> alive? == true end)
 
@@ -274,7 +273,6 @@ defmodule ConwaysGame.Grid do
             nx = x + dx,
             ny = y + dy,
             nx >= 0 and nx < width and ny >= 0 and ny < height do
-          # FIX: utiliser nx, ny au lieu de x, y
           Map.get(grid, {nx, ny})
         end
 
