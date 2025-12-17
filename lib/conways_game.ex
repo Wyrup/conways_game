@@ -1,19 +1,19 @@
 defmodule ConwaysGame do
   @moduledoc """
-  Implémentation distribuée du jeu de la vie de Conway.
+  Implementation distribuee du jeu de la vie de Conway.
   Chaque cellule est un processus Elixir distinct.
   """
 
   @doc """
-  Point d'entrée principal pour lancer le jeu.
+  Point d'entree principal pour lancer le jeu.
   """
   def start(width \\ 30, height \\ 30) do
     nodes = [node() | Node.list()]
-    IO.puts("Distribution sur #{length(nodes)} nœud(s): #{inspect(nodes)}")
-    IO.puts("Création de la grille #{width}x#{height}...")
+    IO.puts("Distribution sur #{length(nodes)} noeud(s): #{inspect(nodes)}")
+    IO.puts("Creation de la grille #{width}x#{height}...")
     grid = ConwaysGame.Grid.create(width, height, nodes)
 
-    # IO.puts("Initialisation aléatoire...")
+    # IO.puts("Initialisation aleatoire...")
     # ConwaysGame.Grid.fill_random(grid, 0.3)
 
     {:ok, game_pid} = ConwaysGame.GameLoop.start_link(grid, width, height)
@@ -47,14 +47,14 @@ defmodule ConwaysGame do
         interactive_loop(game_pid, grid)
 
       "c" ->
-        IO.puts("Entrez les coordonnées (x,y):")
+        IO.puts("Entrez les coordonnees (x,y):")
         raw_coords = IO.gets("coords> ")
         coords = String.trim(raw_coords)
 
         case parse_coords(coords) do
           {:ok, x, y} ->
             ConwaysGame.GameLoop.toggle_cell(game_pid, {x, y})
-            IO.puts("Cellule (#{x},#{y}) modifiée")
+            IO.puts("Cellule (#{x},#{y}) modifiee")
 
           :error ->
             IO.puts("Format invalide. Utilisez: x,y")
@@ -94,14 +94,14 @@ end
 
 defmodule ConwaysGame.Cell do
   @moduledoc """
-  Processus représentant une cellule individuelle.
+  Processus representant une cellule individuelle.
   """
 
   use GenServer
 
   @doc """
-  Démarre un processus cellule à la position {x, y}.
-  État initial: {alive?, neighbors_pids, position}
+  Demarre un processus cellule a la position {x, y}.
+  etat initial: {alive?, neighbors_pids, position}
   """
   def start_link(x, y, alive? \\ false) do
     GenServer.start_link(__MODULE__, {x, y, alive?})
@@ -115,7 +115,7 @@ defmodule ConwaysGame.Cell do
   end
 
   @doc """
-  Demande à la cellule de calculer son prochain état.
+  Demande a la cellule de calculer son prochain etat.
   La cellule interroge ses voisins pour compter les vivants.
   """
   def compute_next_state(cell_pid) do
@@ -123,7 +123,7 @@ defmodule ConwaysGame.Cell do
   end
 
   @doc """
-  Applique le nouvel état (après que toutes les cellules aient calculé).
+  Applique le nouvel etat (apres que toutes les cellules aient calcule).
   """
   def apply_next_state(cell_pid) do
     GenServer.call(cell_pid, :apply_next)
@@ -137,7 +137,7 @@ defmodule ConwaysGame.Cell do
   end
 
   @doc """
-  Change l'état de la cellule, par défaut true
+  Change l'etat de la cellule, par defaut true
   """
   def set_alive(cell_pid, alive? \\ true) do
     GenServer.call(cell_pid, {:set_alive, alive?})
@@ -199,11 +199,11 @@ defmodule ConwaysGame.Grid do
   """
 
   @doc """
-  Crée une grille de cellules (processus) sur plusieurs nœuds.
+  Cree une grille de cellules (processus) sur plusieurs noeuds.
   Retourne une map: %{{x, y} => cell_pid}
   """
   def create(width, height, nodes \\ [node()]) do
-    # Phase 1: Créer les cellules
+    # Phase 1: Creer les cellules
     grid_map =
       for x <- 0..(width - 1),
           y <- 0..(height - 1),
@@ -237,12 +237,12 @@ defmodule ConwaysGame.Grid do
   end
 
   def step(grid_map) do
-    # Phase 1: Toutes les cellules calculent leur prochain état
+    # Phase 1: Toutes les cellules calculent leur prochain etat
     Enum.each(grid_map, fn {_pos, pid} ->
       ConwaysGame.Cell.compute_next_state(pid)
     end)
 
-    # Phase 2: Toutes les cellules appliquent leur nouveau état
+    # Phase 2: Toutes les cellules appliquent leur nouveau etat
     Enum.each(grid_map, fn {_pos, pid} ->
       ConwaysGame.Cell.apply_next_state(pid)
     end)
@@ -391,7 +391,7 @@ defmodule ConwaysGame.GameLoop do
     {:noreply, %{new_state | timer_ref: timer_ref}}
   end
 
-  # Helpers privés
+  # Helpers prives
 
   defp do_step(state) do
     ConwaysGame.Grid.step(state.grid_map)
@@ -405,7 +405,7 @@ defmodule ConwaysGame.GameLoop do
   end
 
   defp render(state) do
-    # Efface l'écran
+    # Efface l'ecran
     clear_screen = IO.ANSI.clear() <> IO.ANSI.home()
     IO.write(clear_screen)
 
