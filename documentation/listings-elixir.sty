@@ -1,0 +1,75 @@
+\ProvidesPackage{listings-elixir}[2025/12/14 Elixir listings]
+\RequirePackage{listings}
+\RequirePackage{xcolor}
+\RequirePackage[utf8]{inputenc}
+\RequirePackage[T1]{fontenc}
+\definecolor{commentgreen}{RGB}{2,112,10}
+\definecolor{eminence}{RGB}{108,48,130}
+\definecolor{weborange}{RGB}{255,165,0}
+\definecolor{frenchplum}{RGB}{129,20,83}
+
+\lstdefinelanguage{elixir}{
+  morekeywords=[1]{% macro
+    Kernel, Kernel.SpecialForms, Atom, Base, Bitwise, Date, DateTime, Exception, Float, Function, Integer, Module, NaiveDateTime, Record, Regex, String, Time, Tuple, URI, Version, Version.Requirement, Access, Date.Range, Enum, Keyword, List, Map, MapSet, Range, Stream, File, File.Stat, File.Stream, IO, IO.ANSI, IO.Stream, OptionParser, Path, Port, StringIO, System, Calendar, Calendar.ISO, Calendar.TimeZoneDatabase, Calendar.UTCOnlyTimeZoneDatabase, Agent, Application, Config, Config.Provider, Config.Reader, DynamicSupervisor, GenServer, Node, PartitionSupervisor, Process, Registry, Supervisor, Task, Task.Supervisor, Collectable, Enumerable, Inspect, Inspect.Algebra, Inspect.Opts, List.Chars, Protocol, String.Chars, Code, Code.Fragment, Kernel.ParallelCompiler, Macro, Macro.Env, Behaviour, Dict, GenEvent, HashDict, HashSet, Set, Supervisor.Spec, ArgumentError, ArithmeticError, BadArityError, BadBooleanError, BadFunctionError, BadMapError, BadStructError, CaseClauseError, Code.LoadError, CompileError, CondClauseError, Enum.EmptyError, Enum.OutOfBoundsError, ErlangError, File.CopyError, File.Error, File.LinkError, File.RenameError, FunctionClauseError, IO.StreamError, Inspect.Error, KeyError, MatchError, Module.Types.Error, OptionParser.ParseError, Protocol.UndefinedError, Regex.CompileError, RuntimeError, SyntaxError, System.EnvError, SystemLimitError, TokenMissingError, TryClauseError, URI.Error, UndefinedFunctionError, UnicodeConversionError, Version.InvalidRequirementError, Version.InvalidVersionError, WithClauseError
+  },
+  morekeywords=[2]{% reserved word
+    case, catch, def, do, else, false, use, alias, receive, timeout, defmacro, defp, for, if, import, defmodule, defprotocol, nil, defmacrop, defoverridable, defimpl, super, fn, raise, true, try, end, with, unless
+  },
+  morekeywords=[3]{% operator
+    +, -, *, /, <, >, =, |, ., &, when
+  },
+  % otherkeywords={<-,->, |>, \%\{, \}, \{},
+  sensitive=true,
+  morecomment=[l]{\#},
+  % morecomment=[n]{/*}{*/},
+  % morecomment=[s][\color{purple}]{:}{\ },
+  morestring=[b]{"},
+  % morestring=[s]{"""}{"""}
+  moredelim=[s][\color{light-rsv}]{@}{\ },
+  % moredelim[s]{\~D[}{]},
+  alsodigit={\_},
+	breaklines,
+	showstringspaces=false,
+}
+
+\definecolor{light-idf}{rgb}{0.302, 0.302, 0.302} % gray   (variable)
+\definecolor{light-com}{rgb}{0.302, 0.302, 0.302} % gray   (comment)
+\definecolor{light-mcr}{rgb}{0.000, 0.000, 0.812} % blue   (macro)
+\definecolor{light-ope}{rgb}{0.737, 0.329, 0.000} % orange (operator)
+\definecolor{light-rsv}{rgb}{0.125, 0.290, 0.529} % blue   (reserved word)
+\definecolor{light-str}{rgb}{0.251, 0.510, 0.000} % green  (string)
+\definecolor{light-num}{rgb}{0.161, 0.216, 0.671} % blue   (number)
+\definecolor{light-bkg}{rgb}{0.969, 0.976, 0.988} % white  (background)
+
+\lstdefinestyle{light}{
+  backgroundcolor={             \color{light-bkg}}, % background
+  basicstyle     ={\ttfamily    \color[gray]{0.1}}, % basic
+  identifierstyle={             \color{light-idf}}, % variable
+  commentstyle   ={             \color{light-com}}, % comment
+  keywordstyle   =[1]{\bfseries \color{light-mcr}}, % macro
+  keywordstyle   =[2]{\bfseries \color{light-rsv}}, % reserved word
+  keywordstyle   =[3]{\bfseries \color{light-ope}}, % operator
+  stringstyle    ={\ttfamily    \color{light-str}}, % string
+  numberstyle    ={\ttfamily    \color{light-num}}, % number
+}
+
+\definecolor{dark-idf}{rgb}{0.863, 0.882, 0.902} % lightgray  (variable)
+\definecolor{dark-com}{rgb}{0.588, 0.576, 0.525} % gray       (comment)
+\definecolor{dark-mcr}{rgb}{0.651, 0.886, 0.180} % lightgreen (macro)
+\definecolor{dark-ope}{rgb}{1.000, 0.325, 0.522} % magenta    (operator)
+\definecolor{dark-rsv}{rgb}{0.294, 0.620, 0.698} % lightblue  (reserved word)
+\definecolor{dark-str}{rgb}{0.902, 0.859, 0.455} % yellow     (string)
+\definecolor{dark-num}{rgb}{0.682, 0.506, 1.000} % purple     (number)
+\definecolor{dark-bkg}{rgb}{0.051, 0.094, 0.161} % darkblue   (background)
+
+\lstdefinestyle{dark}{
+  backgroundcolor={             \color{dark-bkg}},  % background
+  basicstyle     ={\ttfamily    \color[gray]{0.9}}, % basic
+  identifierstyle={             \color{dark-idf}},  % variable
+  commentstyle   ={             \color{dark-com}},  % comment
+  keywordstyle   =[1]{\bfseries \color{dark-mcr}},  % macro
+  keywordstyle   =[2]{\bfseries \color{dark-rsv}},  % reserved word
+  keywordstyle   =[3]{\bfseries \color{dark-ope}},  % operator
+  stringstyle    ={\ttfamily    \color{dark-str}},  % string
+  numberstyle    ={\ttfamily    \color{dark-num}},  % number
+}
