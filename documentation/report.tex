@@ -1,5 +1,23 @@
 \documentclass{article}
 \usepackage{graphicx} % Required for inserting images
+\usepackage{listings}
+\usepackage{listings-elixir}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{url}
+\usepackage{amsmath}
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue,
+    filecolor=magenta,      
+    urlcolor=cyan,
+    pdftitle={Overleaf Example},
+    pdfpagemode=FullScreen,
+    }
+
+\urlstyle{same}
+
+\lstset{style=light, inputencoding=utf8, extendedchars=true, columns=fullflexible}  % or dark
 
 \title{Recreation of the game of life using Elixir in concurrent programming}
 \author{Tim Gouvernon \& Tanguy Godat}
@@ -15,22 +33,752 @@ Conway's Game of Life is a cellular automaton simulation, our goal is to develop
 \begin{itemize}
     \item Each cell is a different Elixir process
     \item The cells should communicate exchanging messages
-    \item At least two BEAM VMs have to be used to demonstrate ???
+    \item At least two BEAM VMs have to be used to demonstrate concurrency
     \item A visualization using the terminal to showcase the program running 
 \end{itemize}
-Those constraints will compel us to use some new technologies for us like GenServer and Supervisor.
+Those constraints will compel us to use some new technologies for us like GenServer.
 
 \section{State-of-the-art}
-The state-of-the-art in distributed cellular automata simulations, such as Conway's Game of Life, leverages Elixir's concurrency model for scalable, fault-tolerant implementations. Elixir projects typically package simulations as Mix applications, utilizing GenServer for cell processes that manage state and message-passing for neighbor interactions. Supervisors oversee process trees, ensuring restarts on failures, while libcluster enables dynamic node clustering across BEAM VMs on separate machines or Docker containers.\\
+The state-of-the-art in distributed cellular automata simulations, such as Conway's Game of Life, leverages Elixir's concurrency model for scalable, fault tolerant implementations. Elixir projects typically package simulations as Mix applications, utilizing GenServer for cell processes that manage state and message passing for neighbor interactions.\\
 
-Using GenServer for each cell provides isolated state management and handles message-passing between neighbors reliably, ensuring the Game of Life's rules execute fault-tolerantly even under high concurrency. Supervisors maintain process lifecycles across crashes, preserving simulation stability during distributed runs. Libcluster simplifies multi-node deployment on separate VMs or Docker, enabling scalable cell distribution beyond single-machine limits, directly supporting your project's cross-VM requirement.
+Using GenServer for each cell provides isolated state management and handles message-passing between neighbors reliably, ensuring the Game of Life's rules execute fault tolerantly even under high concurrency. 
 \section{Presentation of the solution}
 
-\section{Validation/evaluation of the solution}
-\section{Limitations} When creating a new grid, the cells in the previous one are still alive and forgotten
-\section{Discussion of the results}
-\section{Bibliography}
-\section{Appendix}
+Our solution is composed of four modules:
+\subsection{ConwaysGame}
+This module is the "client" module, where the user can create a grid using this command: \texttt{ConwaysGame.start(width, height)}, where default value are (30, 30). After that the user is shown the grid with a list of command and enter an interactive REPL-like interface for controlling the simulation.
+\begin{lstlisting}[language=elixir,style=light]
+IO.puts("\nCommandes disponibles:")
+IO.puts("  s - start/pause")
+IO.puts("  n - next step (mode pause)")
+IO.puts("  r - shuffle random")
+IO.puts("  c - ajouter/retirer une cellule (coords x,y)")
+IO.puts("  q - quitter")
+IO.puts("")
+\end{lstlisting}
 
+The different commands will call their respective ConwaysGame.GameLoop methods. Explained in further details in \ref{ConwaysGame.GameLoop}
+
+\subsection{ConwaysGame.Cell}
+This module represents a single cell as an Elixir process using GenServer, giving it its state and behaviours.
+The state of a cell is a map containing:
+\begin{itemize}
+    \item position: \{x, y\}, a tuples of its coordinates
+    \item alive: boolean, current life status
+    \item neighbors: $\bigl[$ $\bigr]$, a list containing the pid of its neighbors
+    \item next\_state: boolean, life status for the next state
+\end{itemize}
+Here the code version:
+\begin{lstlisting}[language=elixir,style=light]
+@impl true
+def init({x, y, alive?}) do
+    state = %{
+        position: {x, y},
+        alive: alive?,
+        neighbors: [],
+        next_state: alive?
+    }
+
+    {:ok, state}
+end
+\end{lstlisting}
+
+The cell has some basic method it can use:
+\begin{itemize}
+    \item \texttt{set\_neighbors(cell\_pid, neighbors\_pids)}% for setting the list of neighbors' pid to the cell
+    \item \texttt{compute\_next\_state(cell\_pid)}
+    \item \texttt{apply\_next\_state(cell\_pid)}
+    \item \texttt{is\_alive?(cell\_pid)}
+    \item \texttt{set\_alive(cell\_pid, alive? \textbackslash\textbackslash true)}
+\end{itemize}
+
+Here is the handling method of \texttt{compute\_next\_state(cell\_pid)}
+\begin{lstlisting}[language=elixir,style=light]
+@impl true
+def handle_call(:compute_next, _from, state) do
+    alive_statuses = Enum.map(state.neighbors, fn neighbor_pid -> is_alive?(neighbor_pid) end)
+    alive_count = Enum.count(alive_statuses, fn alive? -> alive? == true end)
+
+    next_state =
+      case {state.alive, alive_count} do
+        {true, 2} -> true
+        {true, 3} -> true
+        {false, 3} -> true
+        _ -> false
+      end
+
+    new_state = %{state | next_state: next_state}
+    {:reply, :ok, new_state}
+  end
+\end{lstlisting}
+\texttt{alive\_statuses} create a list of response from the call \texttt{is\_alive?/1}.\\
+\texttt{alive\_count} counts the number of \texttt{true} in \texttt{alive\_statuses}.\\
+\texttt{next\_state} applies the rule of Life of the cellular automaton.
+\subsection{ConwaysGame.Grid}
+
+The \texttt{Grid} module serves as the central coordinator for the game grid, managing cell creation, distribution across nodes, and synchronization of game state updates.
+
+\subsubsection{Grid Creation and Distribution}
+
+The \texttt{create/3} function initializes the distributed grid in two distinct phases:
+
+\begin{lstlisting}[language=elixir,style=light]
+def create(width, height, nodes \\ [node()]) do
+    # Phase 1: Create all cell processes
+    grid_map =
+        for x <- 0..(width - 1),
+            y <- 0..(height - 1),
+            into: %{} do
+            spawn_cell(select_node(x, y, nodes), x, y, false)
+        end
+
+    # Phase 2: Configure neighbor relationships
+    setup_neighbors(grid_map, width, height)
+
+    grid_map
+end
+\end{lstlisting}
+
+\textbf{Phase 1 - Process Creation:} The double loop iterates over all positions $(x, y)$ in the grid. For each position, \texttt{spawn\_cell/4} creates a new cell process. The helper function \texttt{select\_node/3} uses a simple distribution algorithm ($\text{rem}(x + y, \text{length}(\text{nodes}))$) to determine on which node each cell should be spawned, ensuring uniform distribution across available nodes. This phase produces a map structure: \texttt{\%\{\{x, y\} => pid\}} where each coordinate tuple maps to its corresponding cell process identifier.
+
+\textbf{Phase 2 - Neighbor Configuration:} The \texttt{setup\_neighbors/3} function establishes the connectivity graph by computing the 8 neighbors for each cell (3 to 8 neighbors depending on position due to grid boundaries). For each cell at position $(x, y)$, it calculates neighbor coordinates using offsets $dx, dy \in \{-1, 0, 1\}$ (excluding the cell itself), validates that neighbors are within grid bounds, retrieves their PIDs from the grid map, and sends this list to the cell via \texttt{set\_neighbors/2}.
+
+\subsubsection{Remote Process Spawning}
+
+The \texttt{spawn\_cell/4} private function handles the creation of cell processes on remote nodes:
+
+\begin{lstlisting}[language=elixir,style=light]
+defp spawn_cell(node, x, y, alive?) do
+    parent = self()
+
+    Node.spawn_link(node, fn ->
+        {:ok, pid} = ConwaysGame.Cell.start_link(x, y, alive?)
+        send(parent, {{x, y}, pid})
+    end)
+
+    receive do
+        {{x_, y_}, pid_} ->
+            {{x_, y_}, pid_}
+    end
+end
+\end{lstlisting}
+
+This function implements a synchronous remote spawning pattern. First, it captures the parent process PID (\texttt{parent = self()}) before entering the closure, as \texttt{self()} within the spawned process would refer to the child. \texttt{Node.spawn\_link/2} creates a linked process on the specified node, if either process crashes, the link ensures the other crashes as well, maintaining system consistency.
+
+Within the remote process, \texttt{ConwaysGame.Cell.start\_link/3} initializes the GenServer and returns its PID. This PID is sent back to the parent along with the cell's coordinates. The parent process blocks on \texttt{receive}, waiting for this message before returning the tuple \texttt{${x, y}$,$pid$}, which is then inserted into the grid map.
+
+\subsubsection{Two-Phase Synchronization}
+
+The \texttt{step/1} function advances the simulation by one generation using a two-phase commit pattern:
+
+\begin{lstlisting}[language=elixir,style=light]
+def step(grid_map) do
+    # Phase 1: All cells compute their next state
+    Enum.each(grid_map, fn {_pos, pid} ->
+        ConwaysGame.Cell.compute_next_state(pid)
+    end)
+
+    # Phase 2: All cells apply their new state simultaneously
+    Enum.each(grid_map, fn {_pos, pid} ->
+        ConwaysGame.Cell.apply_next_state(pid)
+    end)
+end
+\end{lstlisting}
+
+\textbf{Phase 1 - Computation:} Each cell queries its neighbors' current states and applies Conway's rules to determine its next state. This result is stored in a temporary \texttt{next\_state} field without modifying the current \texttt{alive} state.
+
+\textbf{Phase 2 - Application:} Only after all cells have completed their computations does the second phase begin, where each cell atomically updates \texttt{alive} $\leftarrow$ \texttt{next\_state}.
+
+This separation is essential to prevent race conditions. Without it, cells updating in arbitrary order would read inconsistent states from their neighbors, some from generation $n$ and others from generation $n+1$ which would violate the fundamental rule that all cells must evolve based on the same snapshot of the grid.
+
+\subsubsection{User Interaction Functions}
+
+\textbf{Random Initialization:} \texttt{fill\_random/2} populates the grid with a stochastic initial state. For each cell, it generates a uniform random number in $[0, 1)$; if this value is below the specified density threshold (default 0.3), the cell is set to alive. This feature aligns with the emergent nature of Conway's Game of Life, where complex patterns can arise from random initial conditions.
+
+\textbf{Manual Cell Toggle:} \texttt{change\_cell/2} allows the user to manually flip a specific cell's state at coordinates $(x, y)$. The function retrieves the cell's PID from the grid map, queries its current state via \texttt{is\_alive?/1}, and applies the logical negation, enabling interactive pattern design.
+
+
+\subsection{ConwaysGame.GameLoop}\label{ConwaysGame.GameLoop}
+
+The \texttt{GameLoop} module implements a GenServer that orchestrates the game's execution, managing the automatic simulation loop, user interaction, and terminal based visualization. It acts as the presentation layer, coordinating between user commands and the underlying grid state.
+
+\subsubsection{GenServer Initialization and State Management}
+
+The module maintains an internal state structure containing the grid reference, dimensions, execution status, generation counter, and timer reference:
+
+\begin{lstlisting}[language=elixir,style=light]
+defmodule State do
+  defstruct [
+    :grid_map,    # Reference to all cell processes
+    :width,       # Grid width
+    :height,      # Grid height
+    :running,     # Boolean: auto-advance enabled
+    :generation,  # Current generation number
+    :timer_ref    # Active timer reference or nil
+  ]
+end
+\end{lstlisting}
+
+The GenServer is initialized via \texttt{start\_link/3}, which spawns the process and establishes the initial state:
+
+\begin{lstlisting}[language=elixir,style=light]
+def start_link(grid_map, width, height) do
+    GenServer.start_link(__MODULE__, {grid_map, width, height})
+end
+\end{lstlisting}
+
+The \texttt{init/1} callback constructs the initial state with \texttt{running: false} (starting in paused mode), renders the initial grid configuration, and returns \texttt{\{:ok, state\}} to complete initialization.
+
+\subsubsection{Play/Pause State Machine}
+
+The \texttt{handle\_call(:toggle\_pause, \_from, state)} callback implements a state machine for controlling automatic progression:
+
+\textbf{Pause Transition (running $\rightarrow$ paused):} When \texttt{state.running == true}, the system cancels the active timer using \texttt{Process.cancel\_timer(state.timer\_ref)} to prevent future ticks, displays "\texttt{[PAUSE]}" to the user, and updates the state to \texttt{running: false, timer\_ref: nil}.
+
+\textbf{Play Transition (paused $\rightarrow$ running):} When \texttt{state.running == false}, the system displays "\texttt{[RUNNING]}", schedules the first tick via \texttt{schedule\_tick/0} (which uses \texttt{Process.send\_after(self(), :tick, 200)} to send a \texttt{:tick} message after 200ms), and updates the state to \texttt{running: true} with the new timer reference.
+
+\subsubsection{Generation Advancement}
+
+The \texttt{do\_step/1} private function encapsulates the complete logic for advancing one generation:
+
+\begin{lstlisting}[language=elixir,style=light]
+defp do_step(state) do
+    ConwaysGame.Grid.step(state.grid_map)
+    new_state = %{state | generation: state.generation + 1}
+    render(new_state)
+    new_state
+end
+\end{lstlisting}
+
+This function delegates the cellular automaton computation to \texttt{ConwaysGame.Grid.step/1}, which executes the two-phase synchronization protocol (compute all next states, then apply all simultaneously), increments the generation counter, invokes \texttt{render/1} to update the terminal display with the new grid state, and returns the updated state for the GenServer.
+
+The \texttt{handle\_call(:step, \_from, state)} callback provides manual single step advancement for the paused mode, allowing users to examine the evolution step-by-step.
+
+\subsubsection{Automatic Loop Mechanism}
+
+The core of the automatic execution is implemented in the asynchronous message handler:
+
+\begin{lstlisting}[language=elixir,style=light]
+@impl true
+def handle_info(:tick, state) do
+    new_state = do_step(state)
+    timer_ref = if new_state.running, do: schedule_tick(), else: nil
+    {:noreply, %{new_state | timer_ref: timer_ref}}
+end
+\end{lstlisting}
+
+This callback forms a self perpetuating loop when \texttt{running} is true. The sequence proceeds as follows: (1) receive the \texttt{:tick} message sent by the timer, (2) invoke \texttt{do\_step/1} to compute and render the next generation, (3) conditionally schedule the next tick if \texttt{new\_state.running} remains true, (4) return \texttt{\{:noreply, new\_state\}} since this is an asynchronous message handler.
+
+The conditional scheduling ensures that, pausing the game cleanly breaks the loop after the final tick processes but does not schedule a successor, allowing the system to remain responsive to user commands without burning CPU cycles.
+
+\subsubsection{Terminal Rendering}
+
+The \texttt{render/1} function produces the visual representation using ANSI escape codes for terminal manipulation:
+
+\textbf{Screen Clearing:} \texttt{IO.ANSI.clear() <> IO.ANSI.home()} clears the terminal and repositions the cursor to (0,0), creating a flicker free update effect.
+
+\textbf{Header Display:} A decorated header using Unicode box drawing characters displays the generation count and current state (RUNNING/PAUSED).
+
+\textbf{Grid Rendering:} The grid visualization uses a nested comprehension:
+
+\begin{lstlisting}[language=elixir,style=light,escapechar=\%]
+for y <- 0..(state.height - 1) do
+  line =
+    for x <- 0..(state.width - 1) do
+      pid = Map.get(state.grid_map, {x, y})
+
+      if ConwaysGame.Cell.is_alive?(pid) do
+        IO.ANSI.green() <> % $\rule{0.6em}{1em} \rule{0.6em}{1em}$ %  <> IO.ANSI.reset()
+      else
+        IO.ANSI.black() <> % $\cdot \cdot$% <> IO.ANSI.reset()
+      end
+    end
+
+  joined_line = Enum.join(line, "")
+  IO.puts(joined_line)
+end
+\end{lstlisting}
+
+For each row $y \in [0, \text{height})$, the inner comprehension iterates over columns $x \in [0, \text{width})$, retrieves the cell's PID from the grid map, queries its state via \texttt{ConwaysGame.Cell.is\_alive?/1}, and produces the appropriate ANSI-colored string: green filled blocks ("$\rule{0.6em}{1em} \rule{0.6em}{1em}$") for alive cells or black dots ("$\cdot \cdot$") for dead cells. Each row is assembled by joining the individual cell strings and output with \texttt{IO.puts/1}. This rendering approach provides visual feedback.
+
+\section{Validation/evaluation of the solution}
+\paragraph{Validation} A clear validation of our method is that we can visually observe the generations following one after the other, with no bug whatsoever. Logic wise it also seems right, we checked that by spawning a \textit{glider} (small ship advancing) it does what it's supposed to : advancing without collapsing and leaving anything behind. Not only we also tested other well known patterns such as still life (not evolving anymore), and some oscillators (they change state and go back to the starting state after $n$ generations).  
+
+
+\paragraph{Evaluation} Currently, when nodes are connected, the Game of Life runs after calling the function \texttt{ConwaysGame.start()}. However, if a node disconnects (e.g., via \texttt{Ctrl+C}), all processes crash because \texttt{Node.spawn\_link()} creates linked processes. When cells on the disconnected node die, the linked processes on other nodes also terminate, causing a cascading failure that crashes the entire program.
+
+The implementation lacks error handling for node failures. When a node disconnects, all associated process identifiers (PIDs) and cell states are permanently lost, with no recovery mechanism in place.
+
+Additionally, most \texttt{GenServer.call/2} operations lack timeout specifications, which can cause indefinite blocking if a remote node becomes unresponsive. Each GenServer call should include an explicit timeout parameter (e.g., \texttt{GenServer.call(pid, message, 5000)}) to prevent the system from hanging when communicating with slow or failing nodes.
+
+Furthermore, the current architecture exhibits poor scalability: for a $30 \times 30$ grid with 900 cells, each having 8 neighbors on average, a single generation requires approximately 7,200 synchronous GenServer calls. This sequential execution model results in significant performance degradation, especially in distributed environments with network latency.
+\newpage
+\section{Discussion of the results}
+
+\subsection{Correctness Validation}
+The implementation correctly simulates Conway's Game of Life rules across generations, as validated through visual observation of smooth evolution without artifacts. Specific patterns confirm logical accuracy: gliders advance diagonally without disintegration, still lifes remain static, and oscillators cycle predictably between states. The two phase commit protocol compute next states first, then apply simultaneously, ensuring all cells base updates on the prior generation's consistent snapshot.
+
+\subsection{Distributed Functionality}
+Cell processes distribute evenly across multiple BEAM VMs using a round robin algorithm based on coordinates modulo node count, enabling demonstration with at least two nodes as required. Remote spawning via \texttt{Node.spawn\_link/2} establishes linked processes that communicate via GenServer calls for neighbor state queries. Terminal visualization with ANSI rendering provides real time feedback, supporting interactive controls like random initialization, manual toggling, and play/pause.
+
+\subsection{Limitations Identified}
+Node disconnection triggers cascading failures due to process links, losing all PIDs and states without recovery, which halts the entire simulation. Synchronous GenServer calls without timeouts risk indefinite blocking on unresponsive nodes, and the sequential model demands $\sim$7,200 calls per generation for a 30$\times$30 grid, amplifying latency in distributed setups. These issues reveal fragility in fault tolerance and scalability under failure conditions.
+
+\subsection{Future Improvements}
+Replace \texttt{Node.spawn\_link} with \texttt{spawn/2} and explicit monitoring via \texttt{Process.monitor/1} to isolate node failures without global crashes. Add timeouts to all GenServer operations, such as \texttt{GenServer.call(pid, :message, 5000)}, for better responce. Parallelize state computation using \texttt{Task.async\_stream/3} and introduce Supervisor trees for cell lifecycle management to enhance robustness and performance.
+
+\section{Bibliography}
+\begin{thebibliography}{1}
+\bibitem{listings-elixir}
+  44103,
+  \emph{listings-elixir},
+  GitHub repository,
+  \url{https://github.com/44103/listings-elixir?tab=readme-ov-file}.
+\end{thebibliography}
+\newpage
+\pagenumbering{Roman}
+\setcounter{page}{1}
+
+\section{Appendix}
+\begin{lstlisting}[language=elixir,style=light,escapechar=\ç]
+defmodule ConwaysGame do
+  @moduledoc """
+  Implementation distribuee du jeu de la vie de Conway.
+  Chaque cellule est un processus Elixir distinct.
+  """
+
+  @doc """
+  Point d'entree principal pour lancer le jeu.
+  """
+  def start(width \\ 30, height \\ 30) do
+    nodes = [node() | Node.list()]
+    IO.puts("Distribution sur #{length(nodes)} noeud(s): #{inspect(nodes)}")
+    IO.puts("Creation de la grille #{width}x#{height}...")
+    grid = ConwaysGame.Grid.create(width, height, nodes)
+
+    # IO.puts("Initialisation aleatoire...")
+    # ConwaysGame.Grid.fill_random(grid, 0.3)
+
+    {:ok, game_pid} = ConwaysGame.GameLoop.start_link(grid, width, height)
+
+    IO.puts("\nCommandes disponibles:")
+    IO.puts("  s - start/pause")
+    IO.puts("  n - next step (mode pause)")
+    IO.puts("  r - shuffle random")
+    IO.puts("  c - ajouter/retirer une cellule (coords x,y)")
+    IO.puts("  q - quitter")
+    IO.puts("")
+
+    interactive_loop(game_pid, grid)
+  end
+
+  defp interactive_loop(game_pid, grid) do
+    raw_input = IO.gets("> ")
+    input = String.trim(raw_input)
+
+    case input do
+      "s" ->
+        ConwaysGame.GameLoop.toggle_pause(game_pid)
+        interactive_loop(game_pid, grid)
+
+      "n" ->
+        ConwaysGame.GameLoop.step(game_pid)
+        interactive_loop(game_pid, grid)
+
+      "r" ->
+        ConwaysGame.GameLoop.shuffle(game_pid)
+        interactive_loop(game_pid, grid)
+
+      "c" ->
+        IO.puts("Entrez les coordonnees (x,y):")
+        raw_coords = IO.gets("coords> ")
+        coords = String.trim(raw_coords)
+
+        case parse_coords(coords) do
+          {:ok, x, y} ->
+            ConwaysGame.GameLoop.toggle_cell(game_pid, {x, y})
+            IO.puts("Cellule (#{x},#{y}) modifiee")
+
+          :error ->
+            IO.puts("Format invalide. Utilisez: x,y")
+        end
+
+        interactive_loop(game_pid, grid)
+
+      "q" ->
+        ConwaysGame.GameLoop.stop(game_pid)
+        IO.puts("Au revoir!")
+        :ok
+
+      _ ->
+        IO.puts("Commande inconnue")
+        interactive_loop(game_pid, grid)
+    end
+  end
+
+  defp parse_coords(coords) do
+    case String.split(coords, ",") do
+      [x_str, y_str] ->
+        trimmed_x = String.trim(x_str)
+        trimmed_y = String.trim(y_str)
+
+        with {x, _} <- Integer.parse(trimmed_x),
+             {y, _} <- Integer.parse(trimmed_y) do
+          {:ok, x, y}
+        else
+          _ -> :error
+        end
+
+      _ ->
+        :error
+    end
+  end
+end
+
+defmodule ConwaysGame.Cell do
+  @moduledoc """
+  Processus representant une cellule individuelle.
+  """
+
+  use GenServer
+
+  @doc """
+  Demarre un processus cellule a la position {x, y}.
+  etat initial: {alive?, neighbors_pids, position}
+  """
+  def start_link(x, y, alive? \\ false) do
+    GenServer.start_link(__MODULE__, {x, y, alive?})
+  end
+
+  @doc """
+  Enregistre les PIDs des 8 voisins de cette cellule.
+  """
+  def set_neighbors(cell_pid, neighbors_pids) do
+    GenServer.call(cell_pid, {:set_neighbors, neighbors_pids})
+  end
+
+  @doc """
+  Demande a la cellule de calculer son prochain etat.
+  La cellule interroge ses voisins pour compter les vivants.
+  """
+  def compute_next_state(cell_pid) do
+    GenServer.call(cell_pid, :compute_next)
+  end
+
+  @doc """
+  Applique le nouvel etat (apres que toutes les cellules aient calcule).
+  """
+  def apply_next_state(cell_pid) do
+    GenServer.call(cell_pid, :apply_next)
+  end
+
+  @doc """
+  Retourne si la cellule est vivante (pour que les voisins puissent interroger).
+  """
+  def is_alive?(cell_pid) do
+    GenServer.call(cell_pid, :is_alive)
+  end
+
+  @doc """
+  Change l'etat de la cellule, par defaut true
+  """
+  def set_alive(cell_pid, alive? \\ true) do
+    GenServer.call(cell_pid, {:set_alive, alive?})
+  end
+
+  @impl true
+  def init({x, y, alive?}) do
+    state = %{
+      position: {x, y},
+      alive: alive?,
+      neighbors: [],
+      next_state: alive?
+    }
+
+    {:ok, state}
+  end
+
+  @impl true
+  def handle_call({:set_neighbors, neighbors_pids}, _from, state) do
+    {:reply, :ok, %{state | neighbors: neighbors_pids}}
+  end
+
+  @impl true
+  def handle_call(:compute_next, _from, state) do
+    alive_statuses = Enum.map(state.neighbors, fn neighbor_pid -> is_alive?(neighbor_pid) end)
+    alive_count = Enum.count(alive_statuses, fn alive? -> alive? == true end)
+
+    next_state =
+      case {state.alive, alive_count} do
+        {true, 2} -> true
+        {true, 3} -> true
+        {false, 3} -> true
+        _ -> false
+      end
+
+    new_state = %{state | next_state: next_state}
+    {:reply, :ok, new_state}
+  end
+
+  @impl true
+  def handle_call(:apply_next, _from, state) do
+    {:reply, :ok, %{state | alive: state.next_state}}
+  end
+
+  @impl true
+  def handle_call(:is_alive, _from, state) do
+    {:reply, state.alive, state}
+  end
+
+  @impl true
+  def handle_call({:set_alive, alive?}, _from, state) do
+    {:reply, :ok, %{state | alive: alive?, next_state: alive?}}
+  end
+end
+
+defmodule ConwaysGame.Grid do
+  @moduledoc """
+  Gestionnaire de la grille - supervise et coordonne toutes les cellules.
+  """
+
+  @doc """
+  Cree une grille de cellules (processus) sur plusieurs noeuds.
+  Retourne une map: %{{x, y} => cell_pid}
+  """
+  def create(width, height, nodes \\ [node()]) do
+    # Phase 1: Creer les cellules
+    grid_map =
+      for x <- 0..(width - 1),
+          y <- 0..(height - 1),
+          into: %{} do
+        spawn_cell(select_node(x, y, nodes), x, y, false)
+      end
+
+    # Phase 2: Configurer les voisins
+    setup_neighbors(grid_map, width, height)
+
+    grid_map
+  end
+
+  def fill_random(grid_map, density \\ 0.3) do
+    Enum.each(grid_map, fn {_pos, pid} ->
+      alive? = :rand.uniform() < density
+      ConwaysGame.Cell.set_alive(pid, alive?)
+    end)
+  end
+
+  def change_cell(grid_map, {x, y}) do
+    case Map.get(grid_map, {x, y}) do
+      nil ->
+        :error
+
+      pid ->
+        current_state = ConwaysGame.Cell.is_alive?(pid)
+        ConwaysGame.Cell.set_alive(pid, not current_state)
+        :ok
+    end
+  end
+
+  def step(grid_map) do
+    # Phase 1: Toutes les cellules calculent leur prochain etat
+    Enum.each(grid_map, fn {_pos, pid} ->
+      ConwaysGame.Cell.compute_next_state(pid)
+    end)
+
+    # Phase 2: Toutes les cellules appliquent leur nouveau etat
+    Enum.each(grid_map, fn {_pos, pid} ->
+      ConwaysGame.Cell.apply_next_state(pid)
+    end)
+  end
+
+  defp select_node(x, y, nodes), do: Enum.at(nodes, rem(x + y, length(nodes)))
+
+  defp spawn_cell(node, x, y, alive?) do
+    parent = self()
+
+    Node.spawn_link(node, fn ->
+      {:ok, pid} = ConwaysGame.Cell.start_link(x, y, alive?)
+      send(parent, {{x, y}, pid})
+    end)
+
+    receive do
+      {{x_, y_}, pid_} ->
+        {{x_, y_}, pid_}
+    end
+  end
+
+  defp setup_neighbors(grid, width, height) do
+    Enum.each(grid, fn {{x, y}, pid} ->
+      neighbors =
+        for dx <- -1..1,
+            dy <- -1..1,
+            {dx, dy} != {0, 0},
+            nx = x + dx,
+            ny = y + dy,
+            nx >= 0 and nx < width and ny >= 0 and ny < height do
+          Map.get(grid, {nx, ny})
+        end
+
+      filtered_neighbors = Enum.reject(neighbors, &is_nil/1)
+      ConwaysGame.Cell.set_neighbors(pid, filtered_neighbors)
+    end)
+  end
+end
+
+defmodule ConwaysGame.GameLoop do
+  @moduledoc """
+  Boucle de jeu principale avec gestion start/pause et affichage.
+  """
+  use GenServer
+
+  # ms entre chaque frame
+  @refresh_rate 200
+
+  defmodule State do
+    defstruct [
+      :grid_map,
+      :width,
+      :height,
+      :running,
+      :generation,
+      :timer_ref
+    ]
+  end
+
+  # API Client
+
+  def start_link(grid_map, width, height) do
+    GenServer.start_link(__MODULE__, {grid_map, width, height})
+  end
+
+  def toggle_pause(pid) do
+    GenServer.call(pid, :toggle_pause)
+  end
+
+  def step(pid) do
+    GenServer.call(pid, :step)
+  end
+
+  def shuffle(pid) do
+    GenServer.call(pid, :shuffle)
+  end
+
+  def toggle_cell(pid, coords) do
+    GenServer.call(pid, {:toggle_cell, coords})
+  end
+
+  def stop(pid) do
+    GenServer.stop(pid)
+  end
+
+  # Callbacks GenServer
+
+  @impl true
+  def init({grid_map, width, height}) do
+    state = %State{
+      grid_map: grid_map,
+      width: width,
+      height: height,
+      running: false,
+      generation: 0,
+      timer_ref: nil
+    }
+
+    render(state)
+    {:ok, state}
+  end
+
+  @impl true
+  def handle_call(:toggle_pause, _from, state) do
+    new_state =
+      if state.running do
+        # Pause
+        if state.timer_ref, do: Process.cancel_timer(state.timer_ref)
+        IO.puts("\n[PAUSE]")
+        %{state | running: false, timer_ref: nil}
+      else
+        # Start
+        IO.puts("\n[RUNNING]")
+        timer_ref = schedule_tick()
+        %{state | running: true, timer_ref: timer_ref}
+      end
+
+    {:reply, :ok, new_state}
+  end
+
+  @impl true
+  def handle_call(:step, _from, state) do
+    new_state = do_step(state)
+    {:reply, :ok, new_state}
+  end
+
+  @impl true
+  def handle_call(:shuffle, _from, state) do
+    ConwaysGame.Grid.fill_random(state.grid_map, 0.3)
+    new_state = %{state | generation: 0}
+    render(new_state)
+    {:reply, :ok, new_state}
+  end
+
+  @impl true
+  def handle_call({:toggle_cell, coords}, _from, state) do
+    ConwaysGame.Grid.change_cell(state.grid_map, coords)
+    render(state)
+    {:reply, :ok, state}
+  end
+
+  @impl true
+  def handle_info(:tick, state) do
+    new_state = do_step(state)
+    timer_ref = if new_state.running, do: schedule_tick(), else: nil
+    {:noreply, %{new_state | timer_ref: timer_ref}}
+  end
+
+  # Helpers prives
+
+  defp do_step(state) do
+    ConwaysGame.Grid.step(state.grid_map)
+    new_state = %{state | generation: state.generation + 1}
+    render(new_state)
+    new_state
+  end
+
+  defp schedule_tick do
+    Process.send_after(self(), :tick, @refresh_rate)
+  end
+
+  defp render(state) do
+    # Efface l'ecran
+    clear_screen = IO.ANSI.clear() <> IO.ANSI.home()
+    IO.write(clear_screen)
+
+    # Header
+    status = if state.running, do: "RUNNING", else: "PAUSED"
+    IO.puts("=========================================================")
+    IO.puts("  Conway's Game of Life - Generation: #{state.generation} [#{status}]")
+    IO.puts("=========================================================")
+    IO.puts("")
+
+    # Grille
+    for y <- 0..(state.height - 1) do
+      line =
+        for x <- 0..(state.width - 1) do
+          pid = Map.get(state.grid_map, {x, y})
+
+          if ConwaysGame.Cell.is_alive?(pid) do
+            IO.ANSI.green() <> "ç $\rule{0.6em}{1em} \rule{0.6em}{1em}$ ç" <> IO.ANSI.reset()
+          else
+            IO.ANSI.black() <> "ç $\cdot \cdot$ ç" <> IO.ANSI.reset()
+          end
+        end
+
+      joined_line = Enum.join(line, "")
+      IO.puts(joined_line)
+    end
+
+    IO.puts("")
+  end
+end
+\end{lstlisting}
 
 \end{document}
